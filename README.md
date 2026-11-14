@@ -63,7 +63,26 @@ pnpm install
 pnpm dev                  # http://127.0.0.1:5888，/api 代理到 http://127.0.0.1:8080
 ```
 
-生产构建：`pnpm build`，产物位于 `frontend/apps/web/dist`。
+生产构建：`pnpm build`，产物位于 `frontend/apps/web/dist`（同时生成 `dist.zip`）。
+
+### Windows 本地开发说明
+
+本仓库的 Go 缓存与 pnpm store 都落在仓库内的 `.cache/`（`.gitignore` 已忽略），避免污染全局目录：
+
+```powershell
+iex (Get-Content .dev\env.ps1 -Raw)      # 设置 GOPATH/GOMODCACHE/GOCACHE/PNPM_HOME 等
+```
+
+若安装依赖时跳过了生命周期脚本（`pnpm install --ignore-scripts`），vben 的 workspace 包需要手工生成 stub，否则
+`vite.config.ts` 会报 `Failed to resolve entry for package "@vben/vite-config"`：
+
+```bash
+pnpm -F @vben/vite-config run stub
+pnpm -F @vben/node-utils run stub
+```
+
+> `frontend/.npmrc` 中显式设置了 `node-linker=hoisted`：vben 的 `stub`（tsdown）在部分沙箱/受限环境下无法穿透
+> pnpm 的 junction 软链，改为平铺安装可避免 `Cannot find package 'ansis'` 一类的解析失败。
 
 ### 3. 常用命令
 
