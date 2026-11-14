@@ -1,0 +1,163 @@
+# 部署说明
+
+## 1. 构建产物
+
+```bash
+# 后端（Linux amd64 交叉编译示例）
+cd backend
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o bin/server ./cmd/server
+
+# 前端（产物为纯静态文件）
+cd frontend
+pnpm install --frozen-lockfile
+pnpm build          # 产物：frontend/apps/web/dist
+```
+
+> 后端二进制不包含任何配置；运行时通过环境变量注入。
+> SQL 迁移与 `migrations/*.sql` 已用 `go:embed` 编进二进制，部署时无需额外拷贝。
+
+## 2. 运行后端
+
+```bash
+# 方式一：环境变量 + systemd
+sudo install -m 0755 bin/server /usr/local/bin/base-admin
+sudo install -d -o www-data -g www-data /etc/base-admin
+sudo install -m 0640 -o root -g www-data backend.env /etc/base-admin/base-admin.env
+sudo systemctl daemon-reload && sudo systemctl enable --now base-admin
+```
+
+`/etc/systemd/system/base-admin.service`：
+
+```ini
+[Unit]
+Description=base-admin API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/base-admin
+EnvironmentFile=/etc/base-admin/base-admin.env
+ExecStart=/usr/local/bin/base-admin
+Restart=on-failure
+RestartSec=3
+# 优雅退出：程序收到 SIGTERM 后会等待在途请求，最多 HTTP_SHUTDOWN_TIMEOUT
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/base-admin
+
+[Install]
+WantedBy=multi-user.target
+```
+
+数据库迁移可显式执行（推荐在发布流水线中单独一步）：
+
+```bash
+set -a; . /etc/base-admin/base-admin.env; set +a
+/usr/local/bin/base-admin-migrate     # 由 cmd/migrate 构建；或直接用 server 的 DB_MIGRATE=true
+```
+
+## 3. Nginx 反向代理
+
+```nginx
+server {
+    listen 80;
+    server_name admin.example.com;
+
+    root /var/www/base-admin;      # frontend/apps/web/dist 的内容
+    index index.html;
+
+    # 前端使用 hash 路由时该段可省略；history 路由需要回退到 index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass         http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        client_max_body_size 8m;
+    }
+
+    location = /healthz { proxy_pass http://127.0.0.1:8080/healthz; access_log off; }
+}
+```
+
+生产环境要同时调整：
+
+- `HTTP_TRUSTED_PROXIES` 设为反向代理的网段（如 `127.0.0.1/32,10.0.0.0/8`），否则审计日志里记录的是代理 IP。
+- `CORS_ALLOWED_ORIGINS` 仅在前后端分离不同源时才需要配置，并建议 `CORS_ALLOW_CREDENTIALS=false`。
+- 前端构建前修改 `frontend/apps/web/.env.production` 的 `VITE_GLOB_API_URL`（同源部署保持 `/api/v1`）。
+
+## 4. 环境变量
+
+完整清单与默认值见 [`backend/.env.example`](../backend/.env.example)。生产环境必须显式设置：
+
+| 变量 | 生产要求 |
+| --- | --- |
+| `APP_ENV` | `production`（会开启额外校验：拒绝默认密钥、通配 CORS+凭证、`APP_DEBUG=true`） |
+| `APP_DEBUG` | `false` |
+| `JWT_SECRET` | 必填，≥32 字符，随机生成（`openssl rand -base64 48`） |
+| `DB_*` | 指向实际实例；`DB_SSLMODE` 公网/云数据库建议 `require` |
+| `DB_TABLE_PREFIX` | 与其他系统共用库时必须唯一，例如 `base_` |
+| `REDIS_*` | 指向实际实例；`REDIS_KEY_PREFIX` 同理需唯一 |
+| `HTTP_TRUSTED_PROXIES` | 反向代理网段 |
+| `CORS_ALLOWED_ORIGINS` | 明确的前端域名 |
+| `LOG_FORMAT` / `LOG_LEVEL` | `json` / `info`（便于采集） |
+| `SECURITY_LOGIN_*` | 按安全策略调整 |
+| `BOOTSTRAP_ADMIN_PASSWORD` | 首次部署设置强密码；创建完成后可从环境变量中移除 |
+
+## 5. 与其它系统共用数据库
+
+本模板支持多个部署共用一个 schema：
+
+- 所有表名都带 `DB_TABLE_PREFIX`，建表、查询、原生 SQL 全部走同一前缀；
+- 迁移记录表为 `<prefix>schema_migrations`，不会与别的系统的迁移表冲突；
+- 迁移过程持有 `pg_advisory_lock`，锁的 key 由 `<prefix>schema_migrations` 计算，互不干扰；
+- Redis 的 key 全部以 `REDIS_KEY_PREFIX` 开头（会话、登录限流）。
+
+注意事项：
+
+1. 前缀只允许 `^[a-z][a-z0-9_]*$`，避免 SQL 注入与大小写问题。
+2. 应用启动/迁移**不会**影响其它前缀的表；不要在共享库上执行 `DROP SCHEMA` 之类的操作。
+3. 修改已有前缀需要手工重命名表，并同步修改 `DB_TABLE_PREFIX`。
+
+## 6. 升级流程
+
+1. 新增迁移文件 `backend/migrations/000N_xxx.sql`，使用 `{{prefix}}` 占位符；**不要修改已应用的旧文件**（checksum 校验会拒绝）。
+2. 发布前先备份数据库（见下）。
+3. 部署新二进制 → 执行迁移（`DB_MIGRATE=true` 自动执行，或单独跑 migrate 命令）→ 重启服务。
+4. 回滚时使用旧二进制；若新迁移做了不兼容变更，按迁移文件中的注释手工回滚（建议采用"先加列/后删列"的兼容式演进）。
+
+备份示例：
+
+```bash
+pg_dump --format=custom --file=base_admin_$(date +%F).dump "$DATABASE_URL"
+```
+
+## 7. 可观测性
+
+- 访问日志：每条请求一行，含 `request_id / method / path / status / latency / ip`，`X-Request-ID` 会回写到响应头，便于串联。
+- 应用日志：`slog`，生产用 `LOG_FORMAT=json`；5xx 才带 `error` 字段与堆栈。
+- 审计日志：写操作入库（`<prefix>operation_logs`），在"系统管理 → 操作日志"中查询。
+- 健康检查：`/healthz`（进程存活）、`/readyz`（依赖可用），可直接接入 K8s 探针或负载均衡健康检查。
+
+## 8. 安全检查清单
+
+- [ ] `JWT_SECRET` 已随机生成并通过密钥管理下发，未写入镜像或代码仓库。
+- [ ] `backend/.env` 位于 `.gitignore` 中，仓库里只有 `.env.example`。
+- [ ] `APP_DEBUG=false`、`LOG_LEVEL=info`、`LOG_FORMAT=json`。
+- [ ] 数据库、Redis 使用最小权限账号，且只对应用服务器开放。
+- [ ] 反向代理启用 HTTPS，并设置 HSTS。
+- [ ] 首次登录后修改默认管理员密码（或直接通过 `BOOTSTRAP_ADMIN_PASSWORD` 指定强密码）。
+- [ ] 定期检查登录日志中的失败记录与限流命中情况。

@@ -1,0 +1,8 @@
+{
+  "pageTitle": "Base Admin console",
+  "pageDesc": "Vue 3 + Naive UI · Gin + GORM · RBAC and audit logs out of the box",
+  "loginSubtitle": "Sign in with the account your administrator created",
+  "welcomeBack": "Welcome back",
+  "username": "Username",
+  "password": "Password"
+}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Base Admin">
+  <defs>
+    <linearGradient id="baseAdminGradient" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3B82F6" />
+      <stop offset="1" stop-color="#1D4ED8" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#baseAdminGradient)" />
+  <rect x="17" y="17" width="12" height="12" rx="3" fill="#FFFFFF" />
+  <rect x="35" y="17" width="12" height="12" rx="3" fill="#FFFFFF" fill-opacity="0.65" />
+  <rect x="17" y="35" width="12" height="12" rx="3" fill="#FFFFFF" fill-opacity="0.65" />
+  <rect x="35" y="35" width="12" height="12" rx="3" fill="#FFFFFF" />
+</svg>

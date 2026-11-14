@@ -1,0 +1,8 @@
+{
+  "pageTitle": "Base Admin 中后台管理系统",
+  "pageDesc": "Vue 3 + Naive UI · Gin + GORM · RBAC 权限与操作审计开箱即用",
+  "loginSubtitle": "使用管理员分配的账号登录后台",
+  "welcomeBack": "欢迎回来",
+  "username": "账号",
+  "password": "密码"
+}
