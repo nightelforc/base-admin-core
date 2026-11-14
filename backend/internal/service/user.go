@@ -208,7 +208,11 @@ func (s *UserService) Delete(ctx context.Context, actorID, id int64) error {
 	if err := s.assertSuperAdminSurvives(ctx, id); err != nil {
 		return err
 	}
-	return s.users.Delete(ctx, id)
+	if err := s.users.Delete(ctx, id); err != nil {
+		return err
+	}
+	// 账号删除后立刻让它已签发的会话失效，避免旧令牌继续在 TTL 内可用。
+	return s.sessions.DeleteAllForUser(ctx, id)
 }
 
 // ResetPassword sets a new password chosen by an administrator.

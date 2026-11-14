@@ -57,7 +57,18 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 		}
 
 		user, err := a.users.FindByID(c.Request.Context(), claims.UserID)
-		if err != nil || !user.IsEnabled() {
+		if err != nil {
+			// 账号已被删除（软删）时，令牌不能再当作"已禁用"处理：
+			// 返回 401 让前端走重新登录，而不是提示一条会让人误解的禁用文案。
+			if apperr.Is(err, apperr.ErrUserNotFound) {
+				response.Fail(c, apperr.ErrTokenInvalid.WithMessage("账号不存在或已被删除，请重新登录"))
+			} else {
+				response.Fail(c, err)
+			}
+			c.Abort()
+			return
+		}
+		if !user.IsEnabled() {
 			response.Fail(c, apperr.ErrAccountDisabled)
 			c.Abort()
 			return

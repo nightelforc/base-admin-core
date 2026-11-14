@@ -139,7 +139,7 @@
 | GET | `/users?keyword=&status=&roleId=&page=1&pageSize=20` | `system:user:list` | 分页列表 |
 | POST | `/users` | `system:user:create` | 创建 |
 | PUT | `/users/:id` | `system:user:update` | 更新 |
-| DELETE | `/users/:id` | `system:user:delete` | 软删除 |
+| DELETE | `/users/:id` | `system:user:delete` | 软删除，同时注销该用户的全部会话 |
 | PUT | `/users/:id/password` | `system:user:reset-password` | 重置密码 |
 | PUT | `/users/:id/status` | `system:user:update` | 启用/禁用 |
 
@@ -260,7 +260,7 @@
 | 40013 | 400 | 新密码不能与旧密码相同 |
 | 40014 | 400 | 用户名不可修改 |
 | 40100 | 401 | 未登录或会话已失效 |
-| 40101 | 401 | Token 无效 |
+| 40101 | 401 | Token 无效（账号被删除时也返回此码，前端需重新登录） |
 | 40102 | 401 | Token 已过期 |
 | 40300 | 403 | 无权限 |
 | 40301 | 403 | 账号已被禁用 |

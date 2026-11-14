@@ -7,6 +7,20 @@
 - 数据表统一前缀，默认 `base_`，通过环境变量 `DB_TABLE_PREFIX` 配置，可与其他系统共用一个数据库。
 - 所有服务配置均从环境变量读取（`backend/.env`），代码中不保留任何硬编码连接串与密钥。
 
+## 界面预览
+
+| 登录 | 工作台 |
+| --- | --- |
+| ![登录](docs/screenshots/login.png) | ![工作台](docs/screenshots/dashboard.png) |
+
+| 用户管理 | 角色权限分配 |
+| --- | --- |
+| ![用户管理](docs/screenshots/user.png) | ![角色管理](docs/screenshots/role.png) |
+
+| 菜单管理 | 操作日志 |
+| --- | --- |
+| ![菜单管理](docs/screenshots/menu.png) | ![操作日志](docs/screenshots/operation-log.png) |
+
 ## 目录结构
 
 ```
