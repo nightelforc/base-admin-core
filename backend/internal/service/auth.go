@@ -12,8 +12,11 @@ import (
 	"github.com/base-admin/base-admin-core/backend/internal/config"
 	"github.com/base-admin/base-admin-core/backend/internal/model"
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
+	"github.com/base-admin/base-admin-core/backend/internal/throttle"
 	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/jwt"
+	"github.com/base-admin/base-admin-core/backend/pkg/password"
+	"github.com/base-admin/base-admin-core/backend/pkg/session"
 )
 
 // TokenPair is what the client stores after a successful login or refresh.
@@ -46,10 +49,10 @@ const HomePath = "/dashboard/workspace"
 type AuthService struct {
 	users    *repository.UserRepository
 	logs     *repository.LogRepository
-	hasher   *security.PasswordHasher
-	tokens   *security.TokenManager
-	sessions *security.SessionStore
-	throttle *security.LoginThrottle
+	hasher   *password.Hasher
+	tokens   *jwt.Manager
+	sessions *session.Store
+	throttle *throttle.Limiter
 	cfg      config.Security
 	now      func() time.Time
 }
@@ -58,10 +61,10 @@ type AuthService struct {
 type AuthDeps struct {
 	Users    *repository.UserRepository
 	Logs     *repository.LogRepository
-	Hasher   *security.PasswordHasher
-	Tokens   *security.TokenManager
-	Sessions *security.SessionStore
-	Throttle *security.LoginThrottle
+	Hasher   *password.Hasher
+	Tokens   *jwt.Manager
+	Sessions *session.Store
+	Throttle *throttle.Limiter
 	Config   config.Security
 }
 
@@ -128,12 +131,12 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (*TokenPair, err
 		return nil, err
 	}
 
-	sessionID, err := security.NewSessionID()
+	sessionID, err := session.NewID()
 	if err != nil {
 		return nil, err
 	}
 
-	session := security.Session{
+	record := session.Session{
 		ID:        sessionID,
 		UserID:    user.ID,
 		Username:  user.Username,
@@ -141,7 +144,7 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (*TokenPair, err
 		UserAgent: truncate(in.UserAgent, 255),
 		CreatedAt: s.now(),
 	}
-	if err := s.sessions.Create(ctx, session); err != nil {
+	if err := s.sessions.Create(ctx, record); err != nil {
 		return nil, err
 	}
 
@@ -163,7 +166,7 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (*TokenPair, err
 // authoritative: a revoked session cannot be refreshed even if the token itself
 // has not expired yet.
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
-	claims, err := s.tokens.Parse(refreshToken, security.TokenTypeRefresh)
+	claims, err := s.tokens.Parse(refreshToken, jwt.TypeRefresh)
 	if err != nil {
 		return nil, err
 	}
@@ -271,11 +274,11 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID int64, current,
 }
 
 func (s *AuthService) issueTokenPair(user *model.User, sessionID string) (*TokenPair, error) {
-	access, _, err := s.tokens.Issue(user.ID, user.Username, sessionID, security.TokenTypeAccess)
+	access, _, err := s.tokens.Issue(user.ID, user.Username, sessionID, jwt.TypeAccess)
 	if err != nil {
 		return nil, err
 	}
-	refresh, _, err := s.tokens.Issue(user.ID, user.Username, sessionID, security.TokenTypeRefresh)
+	refresh, _, err := s.tokens.Issue(user.ID, user.Username, sessionID, jwt.TypeRefresh)
 	if err != nil {
 		return nil, err
 	}

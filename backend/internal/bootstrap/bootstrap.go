@@ -12,14 +12,14 @@ import (
 	"github.com/base-admin/base-admin-core/backend/internal/model"
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
 	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/password"
 )
 
 // Deps are the collaborators the bootstrap needs.
 type Deps struct {
 	Users  *repository.UserRepository
 	Roles  *repository.RoleRepository
-	Hasher *security.PasswordHasher
+	Hasher *password.Hasher
 	Config config.Bootstrap
 	Log    *slog.Logger
 }
@@ -56,19 +56,19 @@ func Run(ctx context.Context, deps Deps) error {
 		return nil
 	}
 
-	password := deps.Config.AdminPassword
-	generated := password == ""
+	secret := deps.Config.AdminPassword
+	generated := secret == ""
 	if generated {
-		password, err = security.RandomPassword(16)
+		secret, err = password.Random(16)
 		if err != nil {
 			return fmt.Errorf("generate bootstrap password: %w", err)
 		}
 	}
-	if err := deps.Hasher.Validate(password); err != nil {
+	if err := deps.Hasher.Validate(secret); err != nil {
 		return fmt.Errorf("bootstrap admin password rejected: %w", err)
 	}
 
-	hash, err := deps.Hasher.Hash(password)
+	hash, err := deps.Hasher.Hash(secret)
 	if err != nil {
 		return fmt.Errorf("hash bootstrap password: %w", err)
 	}
@@ -96,7 +96,7 @@ func Run(ctx context.Context, deps Deps) error {
 	// one has to be surfaced, and only once.
 	if generated {
 		deps.Log.Warn("bootstrap admin created with a generated password, change it after the first login",
-			"username", username, "password", password)
+			"username", username, "password", secret)
 	} else {
 		deps.Log.Info("bootstrap admin created", "username", username, "user_id", user.ID)
 	}

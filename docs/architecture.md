@@ -1,4 +1,4 @@
-﻿# 架构说明
+# 架构说明
 
 ## 1. 总体结构
 
@@ -12,7 +12,8 @@ Gin 路由 ── middleware(RequestID → AccessLog → Recovery → CORS → B
 handler ──► service ──► repository ──► GORM ──► PostgreSQL
                 │
                 ├─► Redis（会话、登录限流）
-                └─► security（bcrypt / JWT）
+                ├─► pkg/password（bcrypt）
+                └─► pkg/jwt（签发 / 校验）
 ```
 
 后端严格分层，依赖方向单向（handler → service → repository → pkg）：
@@ -22,11 +23,14 @@ handler ──► service ──► repository ──► GORM ──► PostgreS
 | `handler` | 绑定/校验参数、调用 service、写响应 | 写业务规则、直接访问 gorm |
 | `service` | 业务规则、事务边界、跨仓储编排 | 出现 `gin.Context`、拼 SQL |
 | `repository` | 数据访问，唯一出现 SQL 的层 | 返回 HTTP 语义、依赖 service |
-| `pkg` | 无业务语义的可复用基础设施（日志、错误、响应、迁移、数据库/缓存连接、JWT/密码/会话） | 依赖 `internal/`、出现业务规则 |
+| `pkg` | 无业务语义的可复用基础设施，按**依赖本体**命名（`postgres`、`redis`、`jwt`、`password`、`session`、`logger`、`apperr`、`response`、`migrate`） | 依赖 `internal/`、出现业务规则 |
 
 `internal/` 是应用私有代码（Go 编译期禁止外部模块 import），`pkg/` 是与业务无关、可被其他项目直接 import 的基础设施。
 `pkg/*` 一律通过 `Options` 结构体接收配置，不 import `internal/config`；由 `cmd/server`、`cmd/migrate` 负责把配置翻译成 `Options`。
-迁移文件的 `fs.FS` 也由调用方注入（`migrations.FS`），因此 `pkg/migrate` 不绑定本项目的 SQL 目录。
+迁移文件的 `fs.FS` 也由调用方注入（`migrations.FS`），因此 `pkg/migrate` 不绑定本项目的 SQL 目录；`pkg/postgres` 的表前缀同样由 `Options.TablePrefix` 注入。
+
+pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis` 而不是 `pkg/cache`，`pkg/postgres` 而不是 `pkg/database`，`pkg/jwt` / `pkg/password` 而不是笼统的 `pkg/security`，所以读 import 就能看出连的是谁。
+登录限流 `internal/throttle` 刻意留在 `internal/`：它编码的是本项目的账号锁定策略，不是可复用基础设施。
 
 ## 2. 配置
 

@@ -1,17 +1,16 @@
-// Package cache opens the Redis client used for sessions, login throttling and
+// Package redis opens the Redis client used for sessions, login throttling and
 // any other short-lived server-side state.
 //
-// Keys are namespaced by the callers (see the key prefix option of the
-// application), not by the client, so that prefixes stay explicit and
-// greppable.
-package cache
+// Keys are namespaced by the caller (the application key prefix), not by the
+// client, so prefixes stay explicit and greppable.
+package redis
 
 import (
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 // Options describes a Redis connection.
@@ -27,8 +26,8 @@ type Options struct {
 }
 
 // Open connects to Redis and verifies the connection with a PING.
-func Open(ctx context.Context, opts Options) (*redis.Client, error) {
-	client := redis.NewClient(&redis.Options{
+func Open(ctx context.Context, opts Options) (*goredis.Client, error) {
+	client := goredis.NewClient(&goredis.Options{
 		Addr:         opts.Addr,
 		Username:     opts.Username,
 		Password:     opts.Password,
@@ -49,7 +48,7 @@ func Open(ctx context.Context, opts Options) (*redis.Client, error) {
 }
 
 // Close releases the client.
-func Close(client *redis.Client) error {
+func Close(client *goredis.Client) error {
 	if client == nil {
 		return nil
 	}

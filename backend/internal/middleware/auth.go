@@ -7,19 +7,20 @@ import (
 
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
 	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/base-admin/base-admin-core/backend/pkg/jwt"
 	"github.com/base-admin/base-admin-core/backend/pkg/response"
-	"github.com/base-admin/base-admin-core/backend/pkg/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/session"
 )
 
 // Authenticator resolves the bearer token of a request into a Principal.
 type Authenticator struct {
-	tokens   *security.TokenManager
-	sessions *security.SessionStore
+	tokens   *jwt.Manager
+	sessions *session.Store
 	users    *repository.UserRepository
 }
 
 // NewAuthenticator wires the token, session and account lookups.
-func NewAuthenticator(tokens *security.TokenManager, sessions *security.SessionStore, users *repository.UserRepository) *Authenticator {
+func NewAuthenticator(tokens *jwt.Manager, sessions *session.Store, users *repository.UserRepository) *Authenticator {
 	return &Authenticator{tokens: tokens, sessions: sessions, users: users}
 }
 
@@ -37,7 +38,7 @@ func (a *Authenticator) Middleware() gin.HandlerFunc {
 			return
 		}
 
-		claims, err := a.tokens.Parse(token, security.TokenTypeAccess)
+		claims, err := a.tokens.Parse(token, jwt.TypeAccess)
 		if err != nil {
 			response.Fail(c, err)
 			c.Abort()

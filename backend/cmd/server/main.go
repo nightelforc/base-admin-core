@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/base-admin/base-admin-core/backend/internal/bootstrap"
@@ -20,12 +20,15 @@ import (
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
 	"github.com/base-admin/base-admin-core/backend/internal/server"
 	"github.com/base-admin/base-admin-core/backend/internal/service"
+	"github.com/base-admin/base-admin-core/backend/internal/throttle"
 	"github.com/base-admin/base-admin-core/backend/migrations"
-	"github.com/base-admin/base-admin-core/backend/pkg/cache"
-	"github.com/base-admin/base-admin-core/backend/pkg/database"
+	"github.com/base-admin/base-admin-core/backend/pkg/jwt"
 	"github.com/base-admin/base-admin-core/backend/pkg/logger"
 	"github.com/base-admin/base-admin-core/backend/pkg/migrate"
-	"github.com/base-admin/base-admin-core/backend/pkg/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/password"
+	"github.com/base-admin/base-admin-core/backend/pkg/postgres"
+	"github.com/base-admin/base-admin-core/backend/pkg/redis"
+	"github.com/base-admin/base-admin-core/backend/pkg/session"
 )
 
 func main() {
@@ -58,7 +61,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := database.Open(ctx, database.Options{
+	db, err := postgres.Open(ctx, postgres.Options{
 		DSN:                cfg.Database.DSN(),
 		TablePrefix:        cfg.Database.TablePrefix,
 		MaxOpenConns:       cfg.Database.MaxOpenConns,
@@ -73,12 +76,12 @@ func run() error {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
 	defer func() {
-		if closeErr := database.Close(db); closeErr != nil {
+		if closeErr := postgres.Close(db); closeErr != nil {
 			log.Error("close postgres", "error", closeErr)
 		}
 	}()
 
-	rdb, err := cache.Open(ctx, cache.Options{
+	rdb, err := redis.Open(ctx, redis.Options{
 		Addr:         cfg.Redis.Addr,
 		Username:     cfg.Redis.Username,
 		Password:     cfg.Redis.Password,
@@ -92,7 +95,7 @@ func run() error {
 		return fmt.Errorf("connect redis: %w", err)
 	}
 	defer func() {
-		if closeErr := cache.Close(rdb); closeErr != nil {
+		if closeErr := redis.Close(rdb); closeErr != nil {
 			log.Error("close redis", "error", closeErr)
 		}
 	}()
@@ -136,7 +139,7 @@ type application struct {
 	authenticator *middleware.Authenticator
 }
 
-func build(cfg *config.Config, log *slog.Logger, db *gorm.DB, rdb *redis.Client) (*application, *middleware.OperationLogger, error) {
+func build(cfg *config.Config, log *slog.Logger, db *gorm.DB, rdb *goredis.Client) (*application, *middleware.OperationLogger, error) {
 	base := repository.NewBase(db)
 
 	users := repository.NewUserRepository(base)
@@ -144,16 +147,19 @@ func build(cfg *config.Config, log *slog.Logger, db *gorm.DB, rdb *redis.Client)
 	menus := repository.NewMenuRepository(base)
 	logs := repository.NewLogRepository(base)
 
-	hasher := security.NewPasswordHasher(cfg.Security.BcryptCost, cfg.Security.PasswordMinLength)
-	tokens := security.NewTokenManager(security.TokenOptions{
+	hasher := password.NewHasher(password.Options{
+		Cost:      cfg.Security.BcryptCost,
+		MinLength: cfg.Security.PasswordMinLength,
+	})
+	tokens := jwt.NewManager(jwt.Options{
 		Secret:     cfg.JWT.Secret,
 		Issuer:     cfg.JWT.Issuer,
 		Audience:   cfg.JWT.Audience,
 		AccessTTL:  cfg.JWT.AccessTTL,
 		RefreshTTL: cfg.JWT.RefreshTTL,
 	})
-	sessions := security.NewSessionStore(rdb, cfg.Redis.KeyPrefix, cfg.JWT.RefreshTTL)
-	throttle := security.NewLoginThrottle(rdb, cfg.Redis.KeyPrefix, cfg.Security.LoginMaxAttempts, cfg.Security.LoginWindow, cfg.Security.LoginBlockDuration)
+	sessions := session.NewStore(rdb, cfg.Redis.KeyPrefix, cfg.JWT.RefreshTTL)
+	loginThrottle := throttle.NewLimiter(rdb, cfg.Redis.KeyPrefix, cfg.Security.LoginMaxAttempts, cfg.Security.LoginWindow, cfg.Security.LoginBlockDuration)
 
 	if err := bootstrap.Run(context.Background(), bootstrap.Deps{
 		Users:  users,
@@ -171,7 +177,7 @@ func build(cfg *config.Config, log *slog.Logger, db *gorm.DB, rdb *redis.Client)
 		Hasher:   hasher,
 		Tokens:   tokens,
 		Sessions: sessions,
-		Throttle: throttle,
+		Throttle: loginThrottle,
 		Config:   cfg.Security,
 	})
 	userService := service.NewUserService(users, roles, hasher, sessions)

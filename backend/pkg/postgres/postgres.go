@@ -1,9 +1,9 @@
-// Package database opens the PostgreSQL connection used by the application.
+// Package postgres opens the PostgreSQL connection used by the application.
 //
-// The package owns connection lifetime and pool tuning; callers only see a
-// *gorm.DB. Configuration is passed in as Options rather than read from the
-// application's config package, so the package stays reusable.
-package database
+// The package owns connection lifetime, pool tuning and GORM's naming strategy;
+// callers only see a *gorm.DB. Configuration arrives as Options instead of being
+// read from the application's config package, so the package stays reusable.
+package postgres
 
 import (
 	"context"

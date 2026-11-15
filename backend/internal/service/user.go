@@ -9,7 +9,8 @@ import (
 	"github.com/base-admin/base-admin-core/backend/internal/model"
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
 	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/password"
+	"github.com/base-admin/base-admin-core/backend/pkg/session"
 )
 
 // usernamePattern keeps account names URL- and log-friendly.
@@ -70,12 +71,12 @@ type UpdateUserInput struct {
 type UserService struct {
 	users    *repository.UserRepository
 	roles    *repository.RoleRepository
-	hasher   *security.PasswordHasher
-	sessions *security.SessionStore
+	hasher   *password.Hasher
+	sessions *session.Store
 }
 
 // NewUserService wires the account use cases.
-func NewUserService(users *repository.UserRepository, roles *repository.RoleRepository, hasher *security.PasswordHasher, sessions *security.SessionStore) *UserService {
+func NewUserService(users *repository.UserRepository, roles *repository.RoleRepository, hasher *password.Hasher, sessions *session.Store) *UserService {
 	return &UserService{users: users, roles: roles, hasher: hasher, sessions: sessions}
 }
 

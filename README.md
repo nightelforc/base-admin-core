@@ -37,15 +37,18 @@ base-admin-core/
 │   │   ├── model/               GORM 模型与常量
 │   │   ├── repository/          数据访问层（仅此层出现 SQL）
 │   │   ├── server/              路由注册与优雅退出
-│   │   └── service/             业务逻辑层
+│   │   ├── service/             业务逻辑层
+│   │   └── throttle/            登录失败限流（应用策略，因此不前移到 pkg）
 │   ├── pkg/                     可复用基础设施（不依赖 internal，可被其他项目 import）
 │   │   ├── apperr/              业务错误码与 HTTP 状态映射
-│   │   ├── cache/               Redis 客户端（会话、限流）
-│   │   ├── database/            PostgreSQL / GORM 连接与连接池
+│   │   ├── jwt/                 JWT 签发与校验
 │   │   ├── logger/              slog 日志与 GORM 适配
 │   │   ├── migrate/             SQL 迁移执行器（前缀占位符 + 校验和）
+│   │   ├── password/            bcrypt 密码哈希与随机密码
+│   │   ├── postgres/            PostgreSQL / GORM 连接与连接池
+│   │   ├── redis/               Redis 客户端
 │   │   ├── response/            统一响应封装与参数绑定
-│   │   └── security/            密码哈希、JWT、会话、登录限流
+│   │   └── session/             Redis 会话存取
 │   ├── migrations/              带 {{prefix}} 占位符的 SQL 迁移
 │   └── .env.example             配置模板（每一项都有注释）
 ├── frontend/                    Vben 5 monorepo（仅保留 Naive UI 应用）
