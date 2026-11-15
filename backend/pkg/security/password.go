@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
 )
 
 // maxPasswordBytes is the hard limit imposed by bcrypt (72 bytes); longer input

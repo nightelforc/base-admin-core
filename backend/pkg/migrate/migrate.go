@@ -26,9 +26,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/migrations"
 )
 
 // PrefixPlaceholder is the token replaced by the configured table prefix.
@@ -45,18 +42,38 @@ type File struct {
 	Checksum string
 }
 
+// Options describes one migration run.
+type Options struct {
+	// FS holds the .sql migration files; embedded by the caller.
+	FS fs.FS
+	// DSN is the PostgreSQL connection string.
+	DSN string
+	// Prefix is substituted for {{prefix}} and names the bookkeeping table.
+	Prefix string
+	// Log receives progress and failure records; nil falls back to slog.Default.
+	Log *slog.Logger
+}
+
 // Run applies all pending migrations and returns how many were executed.
-func Run(ctx context.Context, cfg config.Database, log *slog.Logger) (int, error) {
-	if !prefixPattern.MatchString(cfg.TablePrefix) {
-		return 0, fmt.Errorf("migrate: invalid table prefix %q", cfg.TablePrefix)
+func Run(ctx context.Context, opts Options) (int, error) {
+	if opts.FS == nil {
+		return 0, fmt.Errorf("migrate: no migration filesystem provided")
+	}
+	if !prefixPattern.MatchString(opts.Prefix) {
+		return 0, fmt.Errorf("migrate: invalid table prefix %q", opts.Prefix)
 	}
 
-	files, err := Load(migrations.FS, cfg.TablePrefix)
+	log := opts.Log
+	if log == nil {
+		log = slog.Default()
+	}
+
+	files, err := Load(opts.FS, opts.Prefix)
 	if err != nil {
 		return 0, err
 	}
 
-	connConfig, err := pgx.ParseConfig(cfg.DSN())
+	connConfig, err := pgx.ParseConfig(opts.DSN)
 	if err != nil {
 		return 0, fmt.Errorf("migrate: parse database dsn: %w", err)
 	}
@@ -77,7 +94,7 @@ func Run(ctx context.Context, cfg config.Database, log *slog.Logger) (int, error
 		_ = conn.Close(closeCtx)
 	}()
 
-	table := cfg.TablePrefix + "schema_migrations"
+	table := opts.Prefix + "schema_migrations"
 
 	// Serialise concurrent migrators. The lock is released by the deferred
 	// unlock (or automatically when the session ends).

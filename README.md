@@ -29,21 +29,23 @@ base-admin-core/
 │   ├── cmd/
 │   │   ├── server/              启动 HTTP 服务（自动执行迁移）
 │   │   └── migrate/             只执行数据库迁移
-│   ├── internal/
-│   │   ├── apperr/              业务错误码与 HTTP 状态映射
+│   ├── internal/                 应用私有代码（Go 编译期禁止外部 import）
 │   │   ├── bootstrap/           启动时初始化超级管理员
 │   │   ├── config/              环境变量配置加载与校验
 │   │   ├── handler/             HTTP 处理器（参数绑定 + 调用 service）
-│   │   ├── logger/              slog 日志与 GORM 适配
 │   │   ├── middleware/          请求 ID / 访问日志 / 恢复 / CORS / 认证 / 鉴权 / 操作日志
-│   │   ├── migrate/             SQL 迁移执行器（前缀占位符 + 校验和）
 │   │   ├── model/               GORM 模型与常量
-│   │   ├── platform/            PostgreSQL / Redis 连接
 │   │   ├── repository/          数据访问层（仅此层出现 SQL）
-│   │   ├── response/            统一响应封装与参数绑定
-│   │   ├── security/            密码哈希、JWT、会话、登录限流
 │   │   ├── server/              路由注册与优雅退出
 │   │   └── service/             业务逻辑层
+│   ├── pkg/                     可复用基础设施（不依赖 internal，可被其他项目 import）
+│   │   ├── apperr/              业务错误码与 HTTP 状态映射
+│   │   ├── cache/               Redis 客户端（会话、限流）
+│   │   ├── database/            PostgreSQL / GORM 连接与连接池
+│   │   ├── logger/              slog 日志与 GORM 适配
+│   │   ├── migrate/             SQL 迁移执行器（前缀占位符 + 校验和）
+│   │   ├── response/            统一响应封装与参数绑定
+│   │   └── security/            密码哈希、JWT、会话、登录限流
 │   ├── migrations/              带 {{prefix}} 占位符的 SQL 迁移
 │   └── .env.example             配置模板（每一项都有注释）
 ├── frontend/                    Vben 5 monorepo（仅保留 Naive UI 应用）

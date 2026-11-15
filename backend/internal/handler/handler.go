@@ -8,9 +8,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
 	"github.com/base-admin/base-admin-core/backend/internal/middleware"
 	"github.com/base-admin/base-admin-core/backend/internal/service"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
 )
 
 // Handler groups the HTTP endpoints of the application.

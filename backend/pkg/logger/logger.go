@@ -1,5 +1,9 @@
 // Package logger builds the process-wide structured logger and carries
 // request-scoped loggers through context.Context.
+//
+// It deliberately knows nothing about the application's configuration types:
+// callers map their own settings onto Options, which keeps the package
+// importable from other projects.
 package logger
 
 import (
@@ -10,22 +14,30 @@ import (
 	"strings"
 
 	"time"
-
-	"github.com/base-admin/base-admin-core/backend/internal/config"
 )
 
 type contextKey struct{}
 
-// New builds the root logger from configuration, installs it as the slog
-// default and returns it.
-func New(cfg config.Log) (*slog.Logger, error) {
-	level, err := parseLevel(cfg.Level)
+// Options describes the root logger.
+type Options struct {
+	// Level is one of debug, info, warn, error.
+	Level string
+	// Format is text (default) or json.
+	Format string
+	// AddSource annotates every record with the file:line of the call site.
+	AddSource bool
+}
+
+// New builds the root logger from opts, installs it as the slog default and
+// returns it.
+func New(opts Options) (*slog.Logger, error) {
+	level, err := parseLevel(opts.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	opts := &slog.HandlerOptions{
-		AddSource: cfg.AddSource,
+	handlerOpts := &slog.HandlerOptions{
+		AddSource: opts.AddSource,
 		Level:     level,
 		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
 			if len(groups) > 0 {
@@ -46,10 +58,10 @@ func New(cfg config.Log) (*slog.Logger, error) {
 	}
 
 	var handler slog.Handler
-	if cfg.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
+	if opts.Format == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, handlerOpts)
 	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
+		handler = slog.NewTextHandler(os.Stdout, handlerOpts)
 	}
 
 	log := slog.New(handler)

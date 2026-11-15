@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
 	"github.com/base-admin/base-admin-core/backend/internal/model"
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
 )
 
 // roleCodePattern constrains role codes to what can be embedded in permission

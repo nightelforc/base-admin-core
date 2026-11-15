@@ -5,9 +5,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
-	"github.com/base-admin/base-admin-core/backend/internal/response"
 	"github.com/base-admin/base-admin-core/backend/internal/service"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/base-admin/base-admin-core/backend/pkg/response"
 )
 
 // logQuery builds a log filter from the request query string.

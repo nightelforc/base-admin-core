@@ -9,8 +9,9 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/internal/logger"
-	"github.com/base-admin/base-admin-core/backend/internal/migrate"
+	"github.com/base-admin/base-admin-core/backend/migrations"
+	"github.com/base-admin/base-admin-core/backend/pkg/logger"
+	"github.com/base-admin/base-admin-core/backend/pkg/migrate"
 )
 
 func main() {
@@ -28,12 +29,21 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	log, err := logger.New(cfg.Log)
+	log, err := logger.New(logger.Options{
+		Level:     cfg.Log.Level,
+		Format:    cfg.Log.Format,
+		AddSource: cfg.Log.AddSource,
+	})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
 
-	applied, err := migrate.Run(context.Background(), cfg.Database, log)
+	applied, err := migrate.Run(context.Background(), migrate.Options{
+		FS:     migrations.FS,
+		DSN:    cfg.Database.DSN(),
+		Prefix: cfg.Database.TablePrefix,
+		Log:    log,
+	})
 	if err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}

@@ -8,8 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
-	"github.com/base-admin/base-admin-core/backend/internal/config"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
 )
 
 // TokenType distinguishes access tokens from refresh tokens so a refresh token
@@ -44,14 +43,28 @@ type TokenManager struct {
 	refreshTTL time.Duration
 }
 
+// TokenOptions configures a TokenManager.
+type TokenOptions struct {
+	// Secret signs and verifies HS256 tokens; must stay server-side only.
+	Secret string
+	// Issuer is written to (and verified from) the iss claim.
+	Issuer string
+	// Audience is written to (and verified from) the aud claim.
+	Audience string
+	// AccessTTL bounds an access token's lifetime.
+	AccessTTL time.Duration
+	// RefreshTTL bounds a refresh token's lifetime.
+	RefreshTTL time.Duration
+}
+
 // NewTokenManager builds a manager from configuration.
-func NewTokenManager(cfg config.JWT) *TokenManager {
+func NewTokenManager(opts TokenOptions) *TokenManager {
 	return &TokenManager{
-		secret:     []byte(cfg.Secret),
-		issuer:     cfg.Issuer,
-		audience:   cfg.Audience,
-		accessTTL:  cfg.AccessTTL,
-		refreshTTL: cfg.RefreshTTL,
+		secret:     []byte(opts.Secret),
+		issuer:     opts.Issuer,
+		audience:   opts.Audience,
+		accessTTL:  opts.AccessTTL,
+		refreshTTL: opts.RefreshTTL,
 	}
 }
 

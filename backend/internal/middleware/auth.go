@@ -5,10 +5,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
-	"github.com/base-admin/base-admin-core/backend/internal/response"
-	"github.com/base-admin/base-admin-core/backend/internal/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/base-admin/base-admin-core/backend/pkg/response"
+	"github.com/base-admin/base-admin-core/backend/pkg/security"
 )
 
 // Authenticator resolves the bearer token of a request into a Principal.

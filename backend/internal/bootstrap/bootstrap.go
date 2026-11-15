@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
 	"github.com/base-admin/base-admin-core/backend/internal/config"
 	"github.com/base-admin/base-admin-core/backend/internal/model"
 	"github.com/base-admin/base-admin-core/backend/internal/repository"
-	"github.com/base-admin/base-admin-core/backend/internal/security"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/base-admin/base-admin-core/backend/pkg/security"
 )
 
 // Deps are the collaborators the bootstrap needs.

@@ -1,4 +1,4 @@
-# 架构说明
+﻿# 架构说明
 
 ## 1. 总体结构
 
@@ -15,14 +15,18 @@ handler ──► service ──► repository ──► GORM ──► PostgreS
                 └─► security（bcrypt / JWT）
 ```
 
-后端严格分层，依赖方向单向（handler → service → repository → platform）：
+后端严格分层，依赖方向单向（handler → service → repository → pkg）：
 
 | 层 | 职责 | 禁止 |
 | --- | --- | --- |
 | `handler` | 绑定/校验参数、调用 service、写响应 | 写业务规则、直接访问 gorm |
 | `service` | 业务规则、事务边界、跨仓储编排 | 出现 `gin.Context`、拼 SQL |
 | `repository` | 数据访问，唯一出现 SQL 的层 | 返回 HTTP 语义、依赖 service |
-| `platform` | 连接池初始化 | 业务逻辑 |
+| `pkg` | 无业务语义的可复用基础设施（日志、错误、响应、迁移、数据库/缓存连接、JWT/密码/会话） | 依赖 `internal/`、出现业务规则 |
+
+`internal/` 是应用私有代码（Go 编译期禁止外部模块 import），`pkg/` 是与业务无关、可被其他项目直接 import 的基础设施。
+`pkg/*` 一律通过 `Options` 结构体接收配置，不 import `internal/config`；由 `cmd/server`、`cmd/migrate` 负责把配置翻译成 `Options`。
+迁移文件的 `fs.FS` 也由调用方注入（`migrations.FS`），因此 `pkg/migrate` 不绑定本项目的 SQL 目录。
 
 ## 2. 配置
 
@@ -39,7 +43,7 @@ handler ──► service ──► repository ──► GORM ──► PostgreS
 
 - 表前缀通过 GORM `NamingStrategy{TablePrefix}` 生效，**模型不实现 `TableName()`**（实现后会绕过前缀）。
 - 需要在原生 SQL 中引用表名时，统一走 `repository.Base.Tables()`，由 `stmt.Parse(&model.X{})` 解析出真实表名。
-- 迁移文件是带 `{{prefix}}` 占位符的普通 SQL（`backend/migrations/*.sql`），由 `internal/migrate` 执行：
+- 迁移文件是带 `{{prefix}}` 占位符的普通 SQL（`backend/migrations/*.sql`），由 `pkg/migrate` 执行：
   1. 以 `QueryExecModeSimpleProtocol` 连接（支持单文件多语句）；
   2. 对 `{{prefix}}` 做白名单校验后替换（不做字符串插值拼表名的其它形式）；
   3. 先取 `pg_advisory_lock(hashtextextended(<schema_migrations 表名>, 0))`，避免多实例并发迁移；
@@ -110,7 +114,7 @@ handler ──► service ──► repository ──► GORM ──► PostgreS
 
 ## 7. 错误处理与响应
 
-`internal/apperr` 定义带 HTTP 状态与业务码的错误，`response.Fail` 统一渲染：
+`pkg/apperr` 定义带 HTTP 状态与业务码的错误，`response.Fail` 统一渲染：
 
 ```json
 { "code": 40901, "message": "用户名已存在", "data": null }

@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
 )
 
 // Session is the server-side half of an issued token pair. Tokens carry the

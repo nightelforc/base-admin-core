@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"github.com/base-admin/base-admin-core/backend/internal/apperr"
 	"github.com/base-admin/base-admin-core/backend/internal/model"
+	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
 )
 
 // MenuRepository persists the navigation tree and its permission nodes.
