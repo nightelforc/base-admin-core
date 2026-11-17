@@ -6,13 +6,14 @@ import (
 	"log/slog"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/base-admin/base-admin-core/backend/internal/config"
 	"github.com/base-admin/base-admin-core/backend/internal/handler"
 	"github.com/base-admin/base-admin-core/backend/internal/middleware"
 	"github.com/base-admin/base-admin-core/backend/internal/model"
+	"github.com/base-admin/base-admin-core/backend/pkg/redis"
 )
 
 // Dependencies is everything the router needs.
@@ -20,7 +21,7 @@ type Dependencies struct {
 	Config        *config.Config
 	Log           *slog.Logger
 	DB            *gorm.DB
-	Cache         *redis.Client
+	Cache         *goredis.Client
 	Handler       *handler.Handler
 	Authenticator *middleware.Authenticator
 	Operations    *middleware.OperationLogger
@@ -47,7 +48,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	)
 
 	router.GET("/healthz", deps.Handler.Health)
-	router.GET("/readyz", handler.Readiness(deps.DB, deps.Cache))
+	router.GET("/readyz", handler.Readiness(deps.DB, redis.NewHealthChecker(deps.Cache)))
 
 	api := router.Group("/api/v1")
 
