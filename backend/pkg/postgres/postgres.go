@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/logger"
+	"github.com/nightelforc/base-admin-core/backend/pkg/logger"
 )
 
 // Options describes a PostgreSQL connection.

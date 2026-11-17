@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/logger"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/logger"
 )
 
 // Envelope is the transport shape of every API response.

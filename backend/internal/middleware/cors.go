@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/config"
+	"github.com/nightelforc/base-admin-core/backend/internal/config"
 )
 
 // CORS implements a strict, explicit allow-list based policy. A wildcard

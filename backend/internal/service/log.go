@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
 )
 
 // LoginLogItem is one authentication audit row.

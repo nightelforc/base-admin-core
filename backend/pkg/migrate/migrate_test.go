@@ -5,7 +5,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/base-admin/base-admin-core/backend/migrations"
+	"github.com/nightelforc/base-admin-core/backend/migrations"
 )
 
 func TestRenderReplacesPlaceholder(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
 )
 
 // audit redaction: any request body field whose name contains one of these

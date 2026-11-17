@@ -9,11 +9,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
-	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/internal/handler"
-	"github.com/base-admin/base-admin-core/backend/internal/middleware"
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/pkg/redis"
+	"github.com/nightelforc/base-admin-core/backend/internal/config"
+	"github.com/nightelforc/base-admin-core/backend/internal/handler"
+	"github.com/nightelforc/base-admin-core/backend/internal/middleware"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/pkg/redis"
 )
 
 // Dependencies is everything the router needs.

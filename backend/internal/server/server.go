@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/internal/middleware"
+	"github.com/nightelforc/base-admin-core/backend/internal/config"
+	"github.com/nightelforc/base-admin-core/backend/internal/middleware"
 )
 
 // Server owns the http.Server and the background writers that must be drained

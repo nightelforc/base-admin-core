@@ -10,8 +10,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
 // tableNames holds the fully qualified (prefixed) table names. They are derived

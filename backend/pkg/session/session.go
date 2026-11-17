@@ -18,7 +18,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
 // Session is the stored record.

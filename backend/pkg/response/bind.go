@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
 // BindJSON decodes and validates a JSON request body, translating binding and

@@ -1,4 +1,4 @@
-module github.com/base-admin/base-admin-core/backend
+module github.com/nightelforc/base-admin-core/backend
 
 go 1.25.14
 

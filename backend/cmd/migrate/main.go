@@ -8,10 +8,10 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/migrations"
-	"github.com/base-admin/base-admin-core/backend/pkg/logger"
-	"github.com/base-admin/base-admin-core/backend/pkg/migrate"
+	"github.com/nightelforc/base-admin-core/backend/internal/config"
+	"github.com/nightelforc/base-admin-core/backend/migrations"
+	"github.com/nightelforc/base-admin-core/backend/pkg/logger"
+	"github.com/nightelforc/base-admin-core/backend/pkg/migrate"
 )
 
 func main() {

@@ -5,11 +5,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/jwt"
-	"github.com/base-admin/base-admin-core/backend/pkg/response"
-	"github.com/base-admin/base-admin-core/backend/pkg/session"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/jwt"
+	"github.com/nightelforc/base-admin-core/backend/pkg/response"
+	"github.com/nightelforc/base-admin-core/backend/pkg/session"
 )
 
 // Authenticator resolves the bearer token of a request into a Principal.

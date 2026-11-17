@@ -28,8 +28,8 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/go-playground/validator/v10"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/postgres"
-	"github.com/base-admin/base-admin-core/backend/pkg/redis"
+	"github.com/nightelforc/base-admin-core/backend/pkg/postgres"
+	"github.com/nightelforc/base-admin-core/backend/pkg/redis"
 )
 
 // Runtime environments understood by the application.

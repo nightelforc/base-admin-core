@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
 )
 
 // TrendPoint is one day of the dashboard activity sparkline.

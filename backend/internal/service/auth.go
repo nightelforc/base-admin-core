@@ -9,14 +9,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
-	"github.com/base-admin/base-admin-core/backend/internal/throttle"
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/jwt"
-	"github.com/base-admin/base-admin-core/backend/pkg/password"
-	"github.com/base-admin/base-admin-core/backend/pkg/session"
+	"github.com/nightelforc/base-admin-core/backend/internal/config"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/internal/throttle"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/jwt"
+	"github.com/nightelforc/base-admin-core/backend/pkg/password"
+	"github.com/nightelforc/base-admin-core/backend/pkg/session"
 )
 
 // TokenPair is what the client stores after a successful login or refresh.

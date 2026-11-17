@@ -13,7 +13,7 @@ import (
 	jwtlib "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
 // Type distinguishes access tokens from refresh tokens so a refresh token can

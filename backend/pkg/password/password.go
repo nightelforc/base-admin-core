@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
 // maxBytes is the hard limit imposed by bcrypt (72 bytes); longer input is

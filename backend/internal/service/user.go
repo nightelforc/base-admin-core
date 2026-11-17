@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/password"
-	"github.com/base-admin/base-admin-core/backend/pkg/session"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/password"
+	"github.com/nightelforc/base-admin-core/backend/pkg/session"
 )
 
 // usernamePattern keeps account names URL- and log-friendly.

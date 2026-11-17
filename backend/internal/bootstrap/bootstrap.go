@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/base-admin/base-admin-core/backend/internal/config"
-	"github.com/base-admin/base-admin-core/backend/internal/model"
-	"github.com/base-admin/base-admin-core/backend/internal/repository"
-	"github.com/base-admin/base-admin-core/backend/pkg/apperr"
-	"github.com/base-admin/base-admin-core/backend/pkg/password"
+	"github.com/nightelforc/base-admin-core/backend/internal/config"
+	"github.com/nightelforc/base-admin-core/backend/internal/model"
+	"github.com/nightelforc/base-admin-core/backend/internal/repository"
+	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
+	"github.com/nightelforc/base-admin-core/backend/pkg/password"
 )
 
 // Deps are the collaborators the bootstrap needs.
