@@ -30,8 +30,6 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
-
-	"github.com/nightelforc/base-admin-core/backend/pkg/redis"
 )
 
 // 应用支持的运行环境。
@@ -135,126 +133,77 @@ func loadConfigFile(path string, cfg *Config) error {
 // Source 返回本次加载的配置文件路径；Load 成功时必非空。
 func (c *Config) Source() string { return c.source }
 
-// Validate 校验无法用单个 struct tag 表达的约束：跨字段一致性、标识符安全性
-// 与时区是否存在；同时拒绝会让服务器失去超时保护的零值或负值。
+// problems 收集一次配置校验中的全部问题，便于一次性返回。
+type problems []string
+
+func (p *problems) add(message string) {
+	*p = append(*p, message)
+}
+
+func (p *problems) addf(format string, args ...any) {
+	*p = append(*p, fmt.Sprintf(format, args...))
+}
+
+func (p *problems) extend(other problems) {
+	*p = append(*p, other...)
+}
+
+func (p problems) err() error {
+	if len(p) == 0 {
+		return nil
+	}
+	return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(p, "\n  - "))
+}
+
+// Validate 先执行结构体 tag 校验，再汇总各组件自己的跨字段校验，最后检查只在
+// 生产环境生效的部署策略。所有问题一次性返回，进程不会带病启动。
 func (c *Config) Validate() error {
 	if err := validator.New().Struct(c); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	var problems []string
+	var p problems
+	p.extend(c.App.validate())
+	p.extend(c.HTTP.validate())
+	p.extend(c.Database.validate())
+	p.extend(c.Redis.validate())
+	p.extend(c.JWT.validate())
+	p.extend(c.Security.validate())
+	p.extend(c.CORS.validate())
+	p.extend(c.validateProduction())
+	return p.err()
+}
 
-	if !tablePrefixPattern.MatchString(c.Database.TablePrefix) {
-		problems = append(problems, fmt.Sprintf("DB_TABLE_PREFIX %q must be lowercase letters, digits and underscores, starting with a letter (or be empty)", c.Database.TablePrefix))
-	}
-	if c.Redis.KeyPrefix == "" {
-		problems = append(problems, "REDIS_KEY_PREFIX must not be empty")
-	}
-	// 两种模式各自必填的项不同：单机要恰好一个数据节点地址，哨兵要主节点名与
-	// 至少一个哨兵地址。配错就退回单机是最危险的失败方式——请求会打到别的实例
-	// 上，因此在这里拦下。空字符串地址也要拒绝：go-redis 收到空 Addr 会回落到
-	// 127.0.0.1:6379，等于静默连错地方。
-	for _, addr := range c.Redis.Addrs {
-		if strings.TrimSpace(addr) == "" {
-			problems = append(problems, "REDIS_ADDRS must not contain empty addresses")
-			break
-		}
-	}
-	switch c.Redis.Mode {
-	case redis.ModeStandalone:
-		if len(c.Redis.Addrs) != 1 {
-			problems = append(problems, fmt.Sprintf("REDIS_ADDRS must contain exactly one address when REDIS_MODE=standalone, got %d", len(c.Redis.Addrs)))
-		}
-	case redis.ModeSentinel:
-		if strings.TrimSpace(c.Redis.MasterName) == "" {
-			problems = append(problems, "REDIS_MASTER_NAME is required when REDIS_MODE=sentinel")
-		}
-		if len(c.Redis.Addrs) == 0 {
-			problems = append(problems, "REDIS_ADDRS must list at least one sentinel address when REDIS_MODE=sentinel")
-		}
-	}
-	if _, err := time.LoadLocation(c.App.Timezone); err != nil {
-		problems = append(problems, fmt.Sprintf("APP_TIMEZONE %q is not a known IANA time zone", c.App.Timezone))
-	}
-	if _, err := time.LoadLocation(c.Database.TimeZone); err != nil {
-		problems = append(problems, fmt.Sprintf("DB_TIMEZONE %q is not a known IANA time zone", c.Database.TimeZone))
-	}
-	if c.JWT.AccessTTL <= 0 || c.JWT.RefreshTTL <= 0 {
-		problems = append(problems, "JWT_ACCESS_TTL and JWT_REFRESH_TTL must be positive")
-	}
-	if c.JWT.RefreshTTL <= c.JWT.AccessTTL {
-		problems = append(problems, "JWT_REFRESH_TTL must be greater than JWT_ACCESS_TTL")
-	}
-	if c.Database.MaxIdleConns > c.Database.MaxOpenConns {
-		problems = append(problems, "DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS")
-	}
-	if c.HTTP.MaxBodyBytes <= 0 {
-		problems = append(problems, "HTTP_MAX_BODY_BYTES must be positive")
+// validateProduction 汇总只在生产环境生效的部署策略。这些规则跨多个组件，
+// 不适合塞进单个结构体，因此留在根配置上。
+func (c *Config) validateProduction() problems {
+	var p problems
+	if !c.App.IsProduction() {
+		return p
 	}
 
-	// 超时取 0 或负数时，net/http 与 go-redis 会按"不超时"处理，慢连接或故障
-	// 实例就可能把进程拖住，因此统一在启动期拦下。HTTP_IDLE_TIMEOUT 允许为 0，
-	// 此时 net/http 回退到 ReadTimeout，属于有意义的配置。
+	if hasPlaceholderSecret(c.JWT.Secret) {
+		p.add("JWT_SECRET must be replaced with a random value in production")
+	}
+	if c.CORS.AllowCredentials && hasWildcard(c.CORS.AllowedOrigins) {
+		p.add("CORS_ALLOW_CREDENTIALS requires explicit CORS_ALLOWED_ORIGINS (wildcard is not allowed)")
+	}
+	if c.App.Debug {
+		p.add("APP_DEBUG must be false in production")
+	}
 	for _, item := range []struct {
 		name  string
-		value time.Duration
+		value string
 	}{
-		{"HTTP_READ_HEADER_TIMEOUT", c.HTTP.ReadHeaderTimeout},
-		{"HTTP_READ_TIMEOUT", c.HTTP.ReadTimeout},
-		{"HTTP_WRITE_TIMEOUT", c.HTTP.WriteTimeout},
-		{"HTTP_SHUTDOWN_TIMEOUT", c.HTTP.ShutdownTimeout},
-		{"REDIS_DIAL_TIMEOUT", c.Redis.DialTimeout},
-		{"REDIS_READ_TIMEOUT", c.Redis.ReadTimeout},
-		{"REDIS_WRITE_TIMEOUT", c.Redis.WriteTimeout},
-		{"SECURITY_LOGIN_WINDOW", c.Security.LoginWindow},
-		{"SECURITY_LOGIN_BLOCK_DURATION", c.Security.LoginBlockDuration},
+		{"DB_PASSWORD", c.Database.Password},
+		{"REDIS_PASSWORD", c.Redis.Password},
+		{"BOOTSTRAP_ADMIN_PASSWORD", c.Bootstrap.AdminPassword},
 	} {
-		if item.value <= 0 {
-			problems = append(problems, item.name+" must be positive")
+		if item.value != "" && hasPlaceholderSecret(item.value) {
+			p.addf("%s must be replaced with a real value in production", item.name)
 		}
 	}
-	if c.HTTP.IdleTimeout < 0 {
-		problems = append(problems, "HTTP_IDLE_TIMEOUT must not be negative")
-	}
-	// RequestTimeout 取 0 表示不限制，负值没有意义；启用时必须早于 WriteTimeout，
-	// 否则连接会先被写超时掐断，504 响应发不出去。
-	if c.HTTP.RequestTimeout < 0 {
-		problems = append(problems, "HTTP_REQUEST_TIMEOUT must not be negative")
-	}
-	if c.HTTP.RequestTimeout > 0 && c.HTTP.WriteTimeout > 0 && c.HTTP.RequestTimeout >= c.HTTP.WriteTimeout {
-		problems = append(problems, "HTTP_REQUEST_TIMEOUT must be less than HTTP_WRITE_TIMEOUT")
-	}
-	if c.CORS.MaxAge < 0 {
-		problems = append(problems, "CORS_MAX_AGE must not be negative")
-	}
-
-	if c.App.IsProduction() {
-		if hasPlaceholderSecret(c.JWT.Secret) {
-			problems = append(problems, "JWT_SECRET must be replaced with a random value in production")
-		}
-		if c.CORS.AllowCredentials && hasWildcard(c.CORS.AllowedOrigins) {
-			problems = append(problems, "CORS_ALLOW_CREDENTIALS requires explicit CORS_ALLOWED_ORIGINS (wildcard is not allowed)")
-		}
-		if c.App.Debug {
-			problems = append(problems, "APP_DEBUG must be false in production")
-		}
-		for _, item := range []struct {
-			name  string
-			value string
-		}{
-			{"DB_PASSWORD", c.Database.Password},
-			{"REDIS_PASSWORD", c.Redis.Password},
-			{"BOOTSTRAP_ADMIN_PASSWORD", c.Bootstrap.AdminPassword},
-		} {
-			if item.value != "" && hasPlaceholderSecret(item.value) {
-				problems = append(problems, item.name+" must be replaced with a real value in production")
-			}
-		}
-	}
-	if len(problems) > 0 {
-		return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(problems, "\n  - "))
-	}
-	return nil
+	return p
 }
 
 // Location 返回应用时区；配置值无法解析时回落到 UTC。
@@ -293,10 +242,17 @@ func (c *Config) Summary() map[string]any {
 	}
 }
 
-// hasPlaceholderSecret 判断密钥是否仍是示例占位值。只查 "changeme" 会漏掉
-// .env.example 里的 "change-me"，因此把常见占位词一起拦下。
+// hasPlaceholderSecret 判断密钥是否仍是示例占位值。除常见占位词外，
+// 也把 <JWT_SECRET>、${JWT_SECRET} 这类模板占位符视为未替换，避免 Secret
+// 清单里的占位名称绕过生产校验。
 func hasPlaceholderSecret(value string) bool {
-	lower := strings.ToLower(value)
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if strings.HasPrefix(lower, "<") && strings.HasSuffix(lower, ">") {
+		return true
+	}
+	if strings.HasPrefix(lower, "${") && strings.HasSuffix(lower, "}") {
+		return true
+	}
 	for _, marker := range []string{"changeme", "change-me", "replace-me", "placeholder", "example"} {
 		if strings.Contains(lower, marker) {
 			return true

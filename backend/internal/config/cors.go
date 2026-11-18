@@ -12,3 +12,12 @@ type CORS struct {
 	AllowCredentials bool          `env:"ALLOW_CREDENTIALS" envDefault:"false" yaml:"allow_credentials"`
 	MaxAge           time.Duration `env:"MAX_AGE" envDefault:"12h" yaml:"max_age"`
 }
+
+// validate 校验预检缓存时间不能为负；0 表示不缓存。
+func (c CORS) validate() problems {
+	var p problems
+	if c.MaxAge < 0 {
+		p.add("CORS_MAX_AGE must not be negative")
+	}
+	return p
+}

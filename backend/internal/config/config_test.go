@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,81 @@ jwt:
 	}
 }
 
+func TestHasPlaceholderSecret(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"change-me", true},
+		{"CHANGE-ME", true},
+		{"placeholder-value", true},
+		{"example-secret", true},
+		{"replace-me", true},
+		{"<JWT_SECRET>", true},
+		{" <DB_PASSWORD> ", true},
+		{"${DB_PASSWORD}", true},
+		{"${JWT_SECRET}", true},
+		{"", false},
+		{strings.Repeat("a", 32), false},
+	}
+	for _, tc := range cases {
+		if got := hasPlaceholderSecret(tc.value); got != tc.want {
+			t.Errorf("hasPlaceholderSecret(%q) = %v, want %v", tc.value, got, tc.want)
+		}
+	}
+}
+
+func TestProductionRejectsAngleBracketPassword(t *testing.T) {
+	path := writeConfig(t, "app:\n  env: production\njwt:\n  secret: "+strings.Repeat("a", 32)+"\n")
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("DB_PASSWORD", "<DB_PASSWORD>")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DB_PASSWORD") {
+		t.Fatalf("Load error = %v, want DB_PASSWORD placeholder rejection", err)
+	}
+}
+
+func TestEnvironmentConstantsMatchAllowedValues(t *testing.T) {
+	if EnvDevelopment != "development" || EnvTest != "test" || EnvProduction != "production" {
+		t.Fatalf("environment constants = %q/%q/%q, want development/test/production",
+			EnvDevelopment, EnvTest, EnvProduction)
+	}
+	if !(App{Env: EnvProduction}).IsProduction() {
+		t.Fatal("production environment must be detected as production")
+	}
+	if (App{Env: EnvTest}).IsProduction() || (App{Env: EnvDevelopment}).IsProduction() {
+		t.Fatal("test/development environments must not be treated as production")
+	}
+}
+
+func TestNonProductionSkipsProductionPolicy(t *testing.T) {
+	for _, env := range []string{EnvDevelopment, EnvTest} {
+		t.Run(env, func(t *testing.T) {
+			path := writeConfig(t, fmt.Sprintf(`
+app:
+  env: %s
+  debug: true
+jwt:
+  secret: change-me-to-a-random-secret-at-least-32-chars
+`, env))
+			t.Setenv(ConfigFileEnv, path)
+			t.Setenv("CORS_ALLOW_CREDENTIALS", "true")
+			t.Setenv("CORS_ALLOWED_ORIGINS", "*")
+			t.Setenv("DB_PASSWORD", "change-me")
+			t.Setenv("REDIS_PASSWORD", "change-me")
+			t.Setenv("BOOTSTRAP_ADMIN_PASSWORD", "change-me")
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load in %s environment must not apply production policy: %v", env, err)
+			}
+			if cfg.App.Env != env {
+				t.Fatalf("APP_ENV = %q, want %q", cfg.App.Env, env)
+			}
+		})
+	}
+}
+
 func TestLoadValidatesRequestTimeout(t *testing.T) {
 	path := writeConfig(t, `
 http:
@@ -101,6 +177,41 @@ http:
 
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "HTTP_REQUEST_TIMEOUT") {
 		t.Fatalf("Load error = %v, want HTTP_REQUEST_TIMEOUT validation error", err)
+	}
+}
+
+func TestLoadAggregatesComponentValidationProblems(t *testing.T) {
+	path := writeConfig(t, `
+app:
+  timezone: Mars/Base
+redis:
+  key_prefix: ""
+jwt:
+  access_ttl: 1m
+  refresh_ttl: 30s
+security:
+  login_window: 0s
+  login_block_duration: 0s
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load succeeded, want aggregated validation error")
+	}
+
+	// 根 Validate 只负责编排，每个组件的 validate() 都应把问题汇总到同一份错误里。
+	for _, want := range []string{
+		"APP_TIMEZONE",
+		"REDIS_KEY_PREFIX",
+		"JWT_REFRESH_TTL",
+		"SECURITY_LOGIN_WINDOW",
+		"SECURITY_LOGIN_BLOCK_DURATION",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Load error = %v, want it to mention %s", err, want)
+		}
 	}
 }
 

@@ -16,3 +16,15 @@ type Security struct {
 	// 仍记录方法、路径、状态码与耗时。上限与 request_body 列长度一致。
 	OperationLogBodyLimit int `env:"OPERATION_LOG_BODY_LIMIT" envDefault:"2048" validate:"min=0,max=4096" yaml:"operation_log_body_limit"`
 }
+
+// validate 校验登录窗口与封禁时长必须为正。
+func (s Security) validate() problems {
+	var p problems
+	if s.LoginWindow <= 0 {
+		p.add("SECURITY_LOGIN_WINDOW must be positive")
+	}
+	if s.LoginBlockDuration <= 0 {
+		p.add("SECURITY_LOGIN_BLOCK_DURATION must be positive")
+	}
+	return p
+}

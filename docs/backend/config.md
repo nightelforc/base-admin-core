@@ -221,7 +221,7 @@ http:
 | `jwt` | `JWT` | `jwt.go` | `JWT_` |
 | `security` | `Security` | `security.go` | `SECURITY_` |
 
-`config.go` 只保留根配置树、加载顺序和启动期校验，不承载具体组件字段。
+`config.go` 只保留根配置树、加载顺序和启动期校验的编排，不承载具体组件字段或组件级规则。
 
 ### 4.2 字段标签
 
@@ -287,7 +287,7 @@ CORS_ALLOWED_ORIGINS=https://admin.example.com,https://ops.example.com
 
 2. 在 `backend/config.yaml` 的对应节点加同名 YAML 键和注释。
 3. 如果需要按环境覆盖，在 `backend/.env.example` 增加示例。
-4. 如果取值有范围或跨字段约束，在 `Validate()` 或 `validate` tag 中补校验。
+4. 单字段范围用 `validate` tag；跨字段约束写到对应结构体文件里的 `validate()`，根 `Validate()` 只负责按组件顺序调用。
 5. 在 `backend/internal/config/config_test.go` 补测试，至少覆盖“默认值 / YAML 覆盖 / 环境变量覆盖”。
 6. 如果该配置会被组件消费，在装配层显式传入，不要让组件自己读环境变量。
 
@@ -295,7 +295,7 @@ CORS_ALLOWED_ORIGINS=https://admin.example.com,https://ops.example.com
 
 ## 5. 启动期校验
 
-`Validate()` 分两阶段执行，顺序不能颠倒。
+`Validate()` 分三段执行，顺序不能颠倒：先做结构体 tag 校验，再让各组件校验自己的跨字段约束，最后执行生产环境策略。前一段失败会直接返回，后两段才聚合全部问题。
 
 ### 5.1 第一阶段：结构体 tag 校验
 
@@ -319,9 +319,26 @@ tag 校验失败时直接返回，不会继续收集跨字段问题。错误形�
 invalid configuration: Key: 'Config.JWT.Secret' Error:Field validation for 'Secret' failed on the 'required' tag
 ```
 
-### 5.2 第二阶段：跨字段校验
+### 5.2 第二阶段：各组件跨字段校验
 
-tag 校验通过后，`Validate()` 聚合以下问题，**一次性列出全部错误**：
+tag 校验通过后，根 `Validate()` 按 `App`、`HTTP`、`Database`、`Redis`、`JWT`、`Security`、`CORS` 的顺序调用各自的 `validate()`。每个方法只返回 `problems`，不打印、不退出；根方法负责汇总，因此 **一次性列出全部错误**：
+
+```go
+// config.go：只保留编排
+func (c *Config) Validate() error {
+    if err := validator.New().Struct(c); err != nil {
+        return fmt.Errorf("invalid configuration: %w", err)
+    }
+    var p problems
+    p.extend(c.App.validate())
+    p.extend(c.HTTP.validate())
+    // ...
+    p.extend(c.validateProduction())
+    return p.err()
+}
+```
+
+新增组件级约束时，改对应结构体文件里的 `validate()` 即可，不需要动 `config.go`。当前聚合的规则包括：
 
 | 约束 | 失败示例 |
 | --- | --- |
@@ -346,14 +363,14 @@ invalid configuration:
 
 这种聚合方式让运维一次看到所有配置问题，而不是修一个、重启一次、再发现下一个。
 
-### 5.3 生产环境额外校验
+### 5.3 第三阶段：生产环境额外校验
 
 当 `APP_ENV=production` 时，额外拒绝：
 
-- `JWT_SECRET` 仍是 `change-me`、`changeme`、`example`、`placeholder` 等占位值。
+- `JWT_SECRET` 仍是 `change-me`、`changeme`、`example`、`placeholder` 等占位值，或形如 `<JWT_SECRET>`、`${JWT_SECRET}` 的模板占位符。
 - `CORS_ALLOW_CREDENTIALS=true` 且 `CORS_ALLOWED_ORIGINS` 包含 `*`。
 - `APP_DEBUG=true`。
-- `DB_PASSWORD`、`REDIS_PASSWORD`、`BOOTSTRAP_ADMIN_PASSWORD` 非空但仍是占位值。
+- `DB_PASSWORD`、`REDIS_PASSWORD`、`BOOTSTRAP_ADMIN_PASSWORD` 非空但仍是占位值或 `<...>`、`${...}` 模板占位符。
 
 空口令不会被这条规则拦截：例如本地 PostgreSQL 使用 trust 认证时，`DB_PASSWORD` 可以为空；生产是否允许空口令由部署环境决定。
 

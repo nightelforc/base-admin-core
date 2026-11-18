@@ -36,6 +36,21 @@ type Database struct {
 	Migrate bool `env:"MIGRATE" envDefault:"true" yaml:"migrate"`
 }
 
+// validate 校验表前缀、连接时区与连接池容量之间的约束。
+func (d Database) validate() problems {
+	var p problems
+	if !tablePrefixPattern.MatchString(d.TablePrefix) {
+		p.addf("DB_TABLE_PREFIX %q must be lowercase letters, digits and underscores, starting with a letter (or be empty)", d.TablePrefix)
+	}
+	if _, err := time.LoadLocation(d.TimeZone); err != nil {
+		p.addf("DB_TIMEZONE %q is not a known IANA time zone", d.TimeZone)
+	}
+	if d.MaxIdleConns > d.MaxOpenConns {
+		p.add("DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS")
+	}
+	return p
+}
+
 // DSN 生成 libpq / pgx 兼容的连接串。查询串是手工拼的：url.Values 会转义
 // Asia/Shanghai 这类时区中的斜杠，PostgreSQL 随后会把它当成未知时区拒绝。
 func (d Database) DSN() string {

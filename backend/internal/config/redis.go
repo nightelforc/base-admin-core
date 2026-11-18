@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"time"
 
 	"github.com/nightelforc/base-admin-core/backend/pkg/redis"
@@ -36,6 +37,50 @@ type Redis struct {
 	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
 	RouteByLatency bool `env:"ROUTE_BY_LATENCY" envDefault:"false" yaml:"route_by_latency"`
 	RouteRandomly  bool `env:"ROUTE_RANDOMLY" envDefault:"false" yaml:"route_randomly"`
+}
+
+// validate 校验 Key 命名空间、地址列表与部署模式是否匹配，以及连接超时。
+func (r Redis) validate() problems {
+	var p problems
+	if r.KeyPrefix == "" {
+		p.add("REDIS_KEY_PREFIX must not be empty")
+	}
+
+	// 空字符串地址也要拒绝：go-redis 收到空 Addr 会回落到 127.0.0.1:6379，
+	// 等于静默连错地方。
+	for _, addr := range r.Addrs {
+		if strings.TrimSpace(addr) == "" {
+			p.add("REDIS_ADDRS must not contain empty addresses")
+			break
+		}
+	}
+	switch r.Mode {
+	case redis.ModeStandalone:
+		if len(r.Addrs) != 1 {
+			p.addf("REDIS_ADDRS must contain exactly one address when REDIS_MODE=standalone, got %d", len(r.Addrs))
+		}
+	case redis.ModeSentinel:
+		if strings.TrimSpace(r.MasterName) == "" {
+			p.add("REDIS_MASTER_NAME is required when REDIS_MODE=sentinel")
+		}
+		if len(r.Addrs) == 0 {
+			p.add("REDIS_ADDRS must list at least one sentinel address when REDIS_MODE=sentinel")
+		}
+	}
+
+	for _, item := range []struct {
+		name  string
+		value time.Duration
+	}{
+		{"REDIS_DIAL_TIMEOUT", r.DialTimeout},
+		{"REDIS_READ_TIMEOUT", r.ReadTimeout},
+		{"REDIS_WRITE_TIMEOUT", r.WriteTimeout},
+	} {
+		if item.value <= 0 {
+			p.addf("%s must be positive", item.name)
+		}
+	}
+	return p
 }
 
 // Options 把 Redis 配置转换成客户端的连接参数。
