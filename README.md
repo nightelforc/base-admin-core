@@ -5,7 +5,7 @@
 - 前端：[vue-vben-admin](https://github.com/vbenjs/vue-vben-admin) v5.7.0（`apps/web-naive` 精简为单应用 `frontend/apps/web`），UI 组件库为 Naive UI。
 - 后端：Gin + GORM，PostgreSQL 18，Redis 7，JWT（access + refresh）+ Redis 会话，RBAC 权限，审计日志。
 - 数据表统一前缀，默认 `base_`，通过环境变量 `DB_TABLE_PREFIX` 配置，可与其他系统共用一个数据库。
-- 所有服务配置均从环境变量读取（`backend/.env`），代码中不保留任何硬编码连接串与密钥。
+- 全量配置在 `backend/config.yaml`，按 L1/L2/L3 分级；环境变量（`backend/.env`、ConfigMap、Secret）只做覆盖，代码中不保留硬编码连接串与密钥。
 
 ## 界面预览
 
@@ -31,7 +31,7 @@ base-admin-core/
 │   │   └── migrate/             只执行数据库迁移
 │   ├── internal/                 应用私有代码（Go 编译期禁止外部 import）
 │   │   ├── bootstrap/           启动时初始化超级管理员
-│   │   ├── config/              环境变量配置加载与校验
+│   │   ├── config/              默认值 + config.yaml + 环境变量装配与校验
 │   │   ├── handler/             HTTP 处理器（参数绑定 + 调用 service）
 │   │   ├── middleware/          请求 ID / 访问日志 / 恢复 / CORS / 认证 / 鉴权 / 操作日志
 │   │   ├── model/               GORM 模型与常量
@@ -50,7 +50,8 @@ base-admin-core/
 │   │   ├── response/            统一响应封装与参数绑定
 │   │   └── session/             Redis 会话存取
 │   ├── migrations/              带 {{prefix}} 占位符的 SQL 迁移
-│   └── .env.example             配置模板（每一项都有注释）
+│   ├── config.yaml              全量配置（L1/L2/L3 分级，含默认值）
+│   └── .env.example             环境变量覆盖示例
 ├── frontend/                    Vben 5 monorepo（仅保留 Naive UI 应用）
 │   └── apps/web/                src/api、src/views、src/router、src/store
 ├── docs/                        架构、接口、部署说明
@@ -64,7 +65,7 @@ base-admin-core/
 
 ```bash
 cd backend
-cp .env.example .env      # 按需修改数据库、Redis、JWT 配置
+cp .env.example .env      # 可选：覆盖数据库口令、Redis 口令、JWT_SECRET 等
 go run ./cmd/migrate      # 建表 + 初始化角色/菜单（可重复执行）
 go run ./cmd/server       # 默认监听 :8080
 ```
@@ -72,7 +73,7 @@ go run ./cmd/server       # 默认监听 :8080
 启动时会自动执行未应用的迁移（`DB_MIGRATE=true`），并按 `BOOTSTRAP_ADMIN_*` 创建超级管理员。
 若 `BOOTSTRAP_ADMIN_PASSWORD` 留空，则生成随机密码并在首次启动日志中打印一次。
 
-默认账号（见 `backend/.env`）：`admin` / `Admin@123456`
+初始管理员用户名由 `BOOTSTRAP_ADMIN_USERNAME` 决定；密码取 `BOOTSTRAP_ADMIN_PASSWORD`，留空时会在首次启动日志中打印一次。
 
 ### 2. 前端
 
@@ -114,13 +115,17 @@ make check                # 前后端一起检查
 
 ## 配置
 
-后端只认环境变量（`.env` 由 `godotenv` 在本地加载），完整清单见
+配置按“内置默认值 < `backend/config.yaml` < 环境变量”加载。全量配置与分级注释见
+[`backend/config.yaml`](backend/config.yaml)，需要覆盖的示例见
 [`backend/.env.example`](backend/.env.example) 与 [docs/deployment.md](docs/deployment.md)。
+`CONFIG_FILE` 可指定配置文件路径；未设置时依次查找 `./config.yaml`、`./backend/config.yaml`。
 
 关键项：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `CONFIG_FILE` | 自动查找 | 全量配置文件路径 |
+| `HTTP_REQUEST_TIMEOUT` | `30s` | 单请求处理时限，超时返回 504；`0` 关闭 |
 | `DB_TABLE_PREFIX` | `base_` | 数据表统一前缀，可为空 |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | - | PostgreSQL 连接 |
 | `REDIS_ADDR` / `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | - | Redis 连接 |

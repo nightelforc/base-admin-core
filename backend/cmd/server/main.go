@@ -53,7 +53,7 @@ func main() {
 // 顺序不能随意调换：日志要早于一切会打日志的组件，数据库要早于仓储，仓储要早于
 // 数据库连接关闭（defer 在函数返回时才执行），迁移要早于 bootstrap 和服务查询。
 func run() error {
-	// 1. 配置：.env 只是本地方便，真实部署直接设环境变量，这里找不到文件也无妨。
+	// 1. 配置：.env 只是本地方便；全量配置来自 config.yaml，部署时可用 CONFIG_FILE 指定。
 	_ = godotenv.Load(".env", "backend/.env")
 
 	cfg, err := config.Load()
@@ -197,7 +197,6 @@ func build(cfg *config.Config, log *slog.Logger, db *gorm.DB, rdb *goredis.Clien
 		Tokens:   tokens,
 		Sessions: sessions,
 		Throttle: loginThrottle,
-		Config:   cfg.Security,
 	})
 	userService := service.NewUserService(users, roles, hasher, sessions)
 	roleService := service.NewRoleService(roles, users, menus)
@@ -206,7 +205,7 @@ func build(cfg *config.Config, log *slog.Logger, db *gorm.DB, rdb *goredis.Clien
 	dashboardService := service.NewDashboardService(users, roles, menus, logs, cfg.Location())
 
 	// 最外层：操作日志中间件与 handler 平级，都只依赖服务层，不直接碰数据库。
-	operations := middleware.NewOperationLogger(logs, log, cfg.Security.OperationLogEnabled, cfg.Security.OperationLogLimit)
+	operations := middleware.NewOperationLogger(logs, log, cfg.Security.OperationLogEnabled, cfg.Security.OperationLogBodyLimit)
 
 	return &application{
 		handler:       handler.New(authService, userService, roleService, menuService, logService, dashboardService, log),

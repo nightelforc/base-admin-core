@@ -108,16 +108,17 @@ func (o *OperationLogger) readAndRestoreBody(c *gin.Context) []byte {
 		return nil
 	}
 
-	limit := o.limit
-	if limit <= 0 {
-		limit = 2048
+	// limit <= 0 表示不记录请求体，也不读取它，避免无谓地占用内存。
+	if o.limit <= 0 {
+		return nil
 	}
-	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, int64(limit)))
+
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, int64(o.limit)))
+	// 无论读取是否完整，都要把已读部分还给处理器。
+	c.Request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), c.Request.Body))
 	if err != nil {
 		return nil
 	}
-	// The handler still needs the body.
-	c.Request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), c.Request.Body))
 	return raw
 }
 
@@ -130,33 +131,57 @@ func isAuditable(method string) bool {
 	}
 }
 
-// redactJSON blanks sensitive fields; non-JSON bodies are stored truncated.
+// redactJSON blanks sensitive fields recursively. Truncated or non-JSON bodies
+// are not stored verbatim: a cut-off JSON fragment can no longer be redacted and
+// would otherwise leak passwords or tokens into the audit table.
 func redactJSON(raw []byte) string {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
 		return ""
 	}
 
-	var payload map[string]any
+	var payload any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return truncate(trimmed, 4096)
+		return "[非 JSON 或已截断的请求体，已省略]"
 	}
 
-	for key := range payload {
-		lower := strings.ToLower(key)
-		for _, fragment := range sensitiveKeys {
-			if strings.Contains(lower, fragment) {
-				payload[key] = "***"
-				break
-			}
-		}
-	}
-
-	sanitized, err := json.Marshal(payload)
+	sanitized, err := json.Marshal(redactValue(payload))
 	if err != nil {
 		return ""
 	}
 	return truncate(string(sanitized), 4096)
+}
+
+// redactValue 递归处理对象与数组，避免嵌套结构里的 password/token 逃过脱敏。
+func redactValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			if isSensitiveKey(key) {
+				v[key] = "***"
+				continue
+			}
+			v[key] = redactValue(item)
+		}
+		return v
+	case []any:
+		for i, item := range v {
+			v[i] = redactValue(item)
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+func isSensitiveKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, fragment := range sensitiveKeys {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func truncate(value string, max int) string {

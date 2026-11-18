@@ -1,0 +1,12 @@
+package config
+
+// App 保存应用标识。
+type App struct {
+	Name     string `env:"NAME" envDefault:"base-admin" yaml:"name"`
+	Env      string `env:"ENV" envDefault:"development" validate:"required,oneof=development test production" yaml:"env"`
+	Timezone string `env:"TIMEZONE" envDefault:"Asia/Shanghai" yaml:"timezone"`
+	Debug    bool   `env:"DEBUG" envDefault:"false" yaml:"debug"`
+}
+
+// IsProduction 报告进程是否使用生产环境配置。
+func (a App) IsProduction() bool { return a.Env == EnvProduction }

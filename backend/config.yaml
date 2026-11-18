@@ -1,0 +1,110 @@
+# base-admin-core 后端全量配置
+#
+# 加载顺序（后者覆盖前者）：
+#   1. 代码内置默认值（envDefault）
+#   2. 本文件
+#   3. 环境变量 / ConfigMap / Secret
+#
+# 环境变量名 = 组件前缀 + 字段名，例如 app.name -> APP_NAME，
+# http.request_timeout -> HTTP_REQUEST_TIMEOUT。
+#
+# 本文件进入版本库，L3 敏感项只保留空占位；真实口令必须通过环境变量或 Secret 注入，
+# 不要写在这里。路径可由 CONFIG_FILE 指定；未设置时依次查找 ./config.yaml、
+# ./backend/config.yaml。
+#
+# 分级：
+#   L1 基础运行：应用标识、日志、HTTP 监听与超时、首次启动引导
+#   L2 基础设施：PostgreSQL、Redis、CORS
+#   L3 安全敏感：JWT、密码策略、登录限流、审计，以及数据库/Redis 口令
+
+# ===========================================================================
+# L1 基础运行
+# ===========================================================================
+
+app:
+  name: base-admin                    # L1 应用名，出现在日志与响应头
+  env: development                    # L1 development | test | production
+  timezone: Asia/Shanghai             # L1 应用时区（IANA 名称）
+  debug: false                        # L1 生产环境必须为 false
+
+log:
+  level: info                         # L1 debug | info | warn | error
+  format: text                        # L1 text | json（生产建议 json）
+  add_source: false                   # L1 是否输出调用文件与行号
+
+http:
+  addr: ":8080"                       # L1 监听地址
+  read_header_timeout: 10s            # L1 读取请求头超时
+  read_timeout: 30s                   # L1 读取完整请求超时
+  write_timeout: 60s                  # L1 写响应超时
+  request_timeout: 30s                # L1 单请求处理超时；0 表示不限制
+  idle_timeout: 120s                  # L1 keep-alive 空闲超时
+  shutdown_timeout: 20s               # L1 优雅退出等待时间
+  max_body_bytes: 4194304             # L1 请求体上限（4 MiB）
+  trusted_proxies: []                 # L1 可信代理 CIDR；空表示不信任任何代理
+
+bootstrap:
+  admin_username: admin               # L1 空值表示跳过首次管理员创建
+  admin_password: ""                  # L3 空值表示随机生成并打印一次
+  admin_nickname: 超级管理员           # L1
+  admin_email: ""                     # L1
+
+# ===========================================================================
+# L2 基础设施
+# ===========================================================================
+
+database:
+  host: 127.0.0.1                     # L2
+  port: 5432                          # L2
+  user: postgres                      # L2
+  password: ""                        # L3 由 DB_PASSWORD / Secret 注入
+  name: postgres                      # L2
+  sslmode: disable                    # L2 disable | allow | prefer | require | verify-ca | verify-full
+  timezone: Asia/Shanghai             # L2 连接会话时区
+  table_prefix: base_                 # L2 表前缀，多个部署共库时必须唯一
+  max_open_conns: 25                  # L2
+  max_idle_conns: 10                  # L2
+  conn_max_lifetime: 30m              # L2
+  conn_max_idle_time: 5m              # L2
+  slow_query_threshold: 200ms         # L2 慢查询日志阈值
+  log_level: warn                     # L2 silent | error | warn | info
+  migrate: true                       # L2 启动时执行内嵌迁移
+
+redis:
+  addr: 127.0.0.1:6379                # L2
+  username: ""                        # L3 可选 ACL 用户名
+  password: ""                        # L3 由 REDIS_PASSWORD / Secret 注入
+  db: 0                               # L2
+  key_prefix: "base-admin:"           # L2 键命名空间，多个部署共库时必须唯一
+  dial_timeout: 5s                    # L2
+  read_timeout: 3s                    # L2
+  write_timeout: 3s                   # L2
+  pool_size: 20                       # L2
+
+cors:
+  allowed_origins: ["*"]              # L2 生产环境应改为明确域名
+  allowed_methods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+  allowed_headers: [Origin, Content-Type, Accept, Authorization, X-Request-ID, X-Requested-With]
+  expose_headers: [X-Request-ID]
+  allow_credentials: false            # L2 为 true 时 allowed_origins 不能包含 "*"
+  max_age: 12h                        # L2 预检结果缓存时间
+
+# ===========================================================================
+# L3 安全敏感
+# ===========================================================================
+
+jwt:
+  secret: ""                          # L3 必填，≥32 字符，由 JWT_SECRET / Secret 注入
+  issuer: base-admin                  # L3
+  audience: base-admin-web            # L3
+  access_ttl: 30m                     # L3
+  refresh_ttl: 168h                   # L3 必须大于 access_ttl
+
+security:
+  bcrypt_cost: 10                     # L3 4-31
+  password_min_length: 8              # L3 6-64
+  login_max_attempts: 5               # L3
+  login_window: 15m                   # L3
+  login_block_duration: 15m           # L3
+  operation_log_enabled: true         # L3
+  operation_log_body_limit: 2048      # L3 审计快照上限（非 HTTP 请求上限）；0 表示不记录请求体

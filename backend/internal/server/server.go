@@ -28,7 +28,7 @@ func New(cfg *config.Config, engine *gin.Engine, log *slog.Logger, operations *m
 	return &Server{
 		http: &http.Server{
 			Addr:              cfg.HTTP.Addr,
-			Handler:           engine,
+			Handler:           newRequestTimeoutHandler(engine, cfg.HTTP.RequestTimeout, log),
 			ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 			ReadTimeout:       cfg.HTTP.ReadTimeout,
 			WriteTimeout:      cfg.HTTP.WriteTimeout,

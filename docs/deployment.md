@@ -13,15 +13,17 @@ pnpm install --frozen-lockfile
 pnpm build          # 产物：frontend/apps/web/dist
 ```
 
-> 后端二进制不包含任何配置；运行时通过环境变量注入。
+> 后端二进制不包含业务配置。全量配置在 `backend/config.yaml`，部署时需与二进制一起提供
+> （或用 `CONFIG_FILE` 指向它）；环境变量只用于覆盖需要按环境变化的项和注入密钥。
 > SQL 迁移与 `migrations/*.sql` 已用 `go:embed` 编进二进制，部署时无需额外拷贝。
 
 ## 2. 运行后端
 
 ```bash
-# 方式一：环境变量 + systemd
+# 方式一：config.yaml + 环境变量覆盖 + systemd
 sudo install -m 0755 bin/server /usr/local/bin/base-admin
 sudo install -d -o www-data -g www-data /etc/base-admin
+sudo install -m 0640 -o root -g www-data config.yaml /etc/base-admin/config.yaml
 sudo install -m 0640 -o root -g www-data backend.env /etc/base-admin/base-admin.env
 sudo systemctl daemon-reload && sudo systemctl enable --now base-admin
 ```
@@ -39,6 +41,7 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/opt/base-admin
+Environment=CONFIG_FILE=/etc/base-admin/config.yaml
 EnvironmentFile=/etc/base-admin/base-admin.env
 ExecStart=/usr/local/bin/base-admin
 Restart=on-failure
@@ -60,7 +63,7 @@ WantedBy=multi-user.target
 
 ```bash
 set -a; . /etc/base-admin/base-admin.env; set +a
-/usr/local/bin/base-admin-migrate     # 由 cmd/migrate 构建；或直接用 server 的 DB_MIGRATE=true
+CONFIG_FILE=/etc/base-admin/config.yaml /usr/local/bin/base-admin-migrate  # 或直接用 server 的 DB_MIGRATE=true
 ```
 
 ## 3. Nginx 反向代理
@@ -99,18 +102,26 @@ server {
 - `CORS_ALLOWED_ORIGINS` 仅在前后端分离不同源时才需要配置，并建议 `CORS_ALLOW_CREDENTIALS=false`。
 - 前端构建前修改 `frontend/apps/web/.env.production` 的 `VITE_GLOB_API_URL`（同源部署保持 `/api/v1`）。
 
-## 4. 环境变量
+## 4. 配置与覆盖
 
-完整清单与默认值见 [`backend/.env.example`](../backend/.env.example)。生产环境必须显式设置：
+全量配置及默认值见 [`backend/config.yaml`](../backend/config.yaml)，按 L1 基础运行 / L2 基础设施 /
+L3 安全敏感分级；每项都标注了对应层级。加载顺序为“内置默认值 < config.yaml < 环境变量”，
+环境变量只写需要覆盖的项，示例见 [`backend/.env.example`](../backend/.env.example)。
+
+Kubernetes 中可将 L1/L2 放进 ConfigMap 并挂载为 `config.yaml`，L3 用 Secret 注入环境变量。
+
+生产环境必须覆盖或确认：
 
 | 变量 | 生产要求 |
 | --- | --- |
 | `APP_ENV` | `production`（会开启额外校验：拒绝默认密钥、通配 CORS+凭证、`APP_DEBUG=true`） |
 | `APP_DEBUG` | `false` |
 | `JWT_SECRET` | 必填，≥32 字符，随机生成（`openssl rand -base64 48`） |
+| `DB_PASSWORD` / `REDIS_PASSWORD` | 由 Secret 注入，不要写入 `config.yaml` |
 | `DB_*` | 指向实际实例；`DB_SSLMODE` 公网/云数据库建议 `require` |
 | `DB_TABLE_PREFIX` | 与其他系统共用库时必须唯一，例如 `base_` |
 | `REDIS_*` | 指向实际实例；`REDIS_KEY_PREFIX` 同理需唯一 |
+| `HTTP_REQUEST_TIMEOUT` | 单请求处理时限，默认 `30s`；返回 504 并取消下游调用，`0` 表示关闭 |
 | `HTTP_TRUSTED_PROXIES` | 反向代理网段 |
 | `CORS_ALLOWED_ORIGINS` | 明确的前端域名 |
 | `LOG_FORMAT` / `LOG_LEVEL` | `json` / `info`（便于采集） |
@@ -154,8 +165,8 @@ pg_dump --format=custom --file=base_admin_$(date +%F).dump "$DATABASE_URL"
 
 ## 8. 安全检查清单
 
-- [ ] `JWT_SECRET` 已随机生成并通过密钥管理下发，未写入镜像或代码仓库。
-- [ ] `backend/.env` 位于 `.gitignore` 中，仓库里只有 `.env.example`。
+- [ ] `JWT_SECRET`、数据库/Redis 口令已通过密钥管理下发，未写入镜像或 `config.yaml`。
+- [ ] `backend/.env` 位于 `.gitignore` 中，仓库里只有 `.env.example`；`config.yaml` 不含任何真实口令。
 - [ ] `APP_DEBUG=false`、`LOG_LEVEL=info`、`LOG_FORMAT=json`。
 - [ ] 数据库、Redis 使用最小权限账号，且只对应用服务器开放。
 - [ ] 反向代理启用 HTTPS，并设置 HSTS。

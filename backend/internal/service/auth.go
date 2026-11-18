@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nightelforc/base-admin-core/backend/internal/config"
 	"github.com/nightelforc/base-admin-core/backend/internal/model"
 	"github.com/nightelforc/base-admin-core/backend/internal/repository"
 	"github.com/nightelforc/base-admin-core/backend/internal/throttle"
@@ -53,7 +52,6 @@ type AuthService struct {
 	tokens   *jwt.Manager
 	sessions *session.Store
 	throttle *throttle.Limiter
-	cfg      config.Security
 	now      func() time.Time
 }
 
@@ -65,7 +63,6 @@ type AuthDeps struct {
 	Tokens   *jwt.Manager
 	Sessions *session.Store
 	Throttle *throttle.Limiter
-	Config   config.Security
 }
 
 // NewAuthService wires the authentication use cases.
@@ -77,7 +74,6 @@ func NewAuthService(deps AuthDeps) *AuthService {
 		tokens:   deps.Tokens,
 		sessions: deps.Sessions,
 		throttle: deps.Throttle,
-		cfg:      deps.Config,
 		now:      func() time.Time { return time.Now().UTC() },
 	}
 }

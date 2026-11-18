@@ -6,7 +6,7 @@
 浏览器 (Vue 3 + Naive UI, Vben 5)
         │  /api/v1  (JSON, Bearer Token)
         ▼
-Gin 路由 ── middleware(RequestID → AccessLog → Recovery → CORS → BodyLimit)
+http.Server(RequestTimeout) ── Gin 路由 ── middleware(RequestID → AccessLog → Recovery → CORS → BodyLimit)
         │              ↘ secured: Auth → 权限校验 → OperationLog
         ▼
 handler ──► service ──► repository ──► GORM ──► PostgreSQL
@@ -34,14 +34,28 @@ pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis
 
 ## 2. 配置
 
-`internal/config` 使用 `caarlos0/env` 从环境变量装配嵌套配置，并做启动期校验：
+配置按“内置默认值 < `config.yaml` < 环境变量”三层装配，环境变量只用于覆盖：
+
+| 层级 | 内容 | 典型来源 |
+| --- | --- | --- |
+| L1 基础运行 | 应用标识、日志、HTTP 监听与超时、首次启动引导（管理员密码除外） | `config.yaml` |
+| L2 基础设施 | PostgreSQL、Redis、CORS 等按环境变化的地址与容量 | `config.yaml` + ConfigMap |
+| L3 安全敏感 | JWT、密码策略、登录限流、审计，以及数据库/Redis 口令 | Secret / 环境变量 |
+
+`backend/config.yaml` 是全量配置的唯一声明处；`CONFIG_FILE` 可指定路径，未设置时依次查找
+`./config.yaml`、`./backend/config.yaml`。YAML 使用严格字段校验，拼错的键会直接启动失败。
+
+启动期还会做跨字段校验：
 
 - 生产环境（`APP_ENV=production`）额外拒绝：示例/默认密钥、`CORS_ALLOWED_ORIGINS=*` 同时开启凭证、`APP_DEBUG=true`。
 - `DB_TABLE_PREFIX` 只允许 `^[a-z][a-z0-9_]*$`（或空），避免拼接出非法表名。
+- HTTP / Redis 的超时以及登录窗口、封禁时长必须为正数，`HTTP_IDLE_TIMEOUT`、`CORS_MAX_AGE`、`HTTP_REQUEST_TIMEOUT` 不得为负。
+- `HTTP_REQUEST_TIMEOUT` 控制单请求处理时长；超时返回 504 并取消请求上下文，下游数据库/Redis 调用随之中断。`0` 表示关闭，启用时必须小于 `HTTP_WRITE_TIMEOUT`，否则连接会先被写超时掐断。
 - `JWT_SECRET` 至少 32 字符，缺失或过短直接启动失败。
 - 日志启动时输出 `config.Summary()`，敏感字段已脱敏。
 
-配置项与默认值见 `backend/.env.example`。
+配置项、默认值与分级注释见 [`backend/config.yaml`](../backend/config.yaml)；需要按环境覆盖的示例见 [`backend/.env.example`](../backend/.env.example)。
+装配顺序、配置文件查找与扩展方式见 [`docs/backend/config.md`](backend/config.md)。
 
 ## 3. 表前缀与迁移
 
