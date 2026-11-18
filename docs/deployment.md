@@ -1,5 +1,8 @@
 # 部署说明
 
+前后端可以独立构建、独立部署：后端是 Go 二进制，前端是纯静态文件；两者不共享构建产物，
+也不要求部署在同一台机器或同一个进程里。
+
 ## 1. 构建产物
 
 ```bash
@@ -108,7 +111,12 @@ server {
 L3 安全敏感分级；每项都标注了对应层级。加载顺序为“内置默认值 < config.yaml < 环境变量”，
 环境变量只写需要覆盖的项，示例见 [`backend/.env.example`](../backend/.env.example)。
 
-Kubernetes 中可将 L1/L2 放进 ConfigMap 并挂载为 `config.yaml`，L3 用 Secret 注入环境变量。
+Kubernetes 清单见 [`backend/deploy/k8s/configmap.yaml`](../backend/deploy/k8s/configmap.yaml) 和
+[`backend/deploy/k8s/secret.yaml`](../backend/deploy/k8s/secret.yaml)：ConfigMap 只列需要覆盖的项，未列出的键
+继续使用 `config.yaml`；ConfigMap / Secret 通过 `envFrom` 以环境变量注入。清单中的 `${...}` 由云效流水线在
+`kubectl apply` 前替换，不是 Kubernetes 语法；变量需先在云效变量组中定义。使用说明见
+[`backend/deploy/k8s/README.md`](../backend/deploy/k8s/README.md)。如果改用挂载 ConfigMap 的方式，
+则设置 `CONFIG_FILE` 指向挂载的配置文件。
 
 生产环境必须覆盖或确认：
 

@@ -6,6 +6,7 @@
 - 后端：Gin + GORM，PostgreSQL 18，Redis 7，JWT（access + refresh）+ Redis 会话，RBAC 权限，审计日志。
 - 数据表统一前缀，默认 `base_`，通过环境变量 `DB_TABLE_PREFIX` 配置，可与其他系统共用一个数据库。
 - 全量配置在 `backend/config.yaml`，按 L1/L2/L3 分级；环境变量（`backend/.env`、ConfigMap、Secret）只做覆盖，代码中不保留硬编码连接串与密钥。
+- `backend/` 与 `frontend/` 目录彼此独立，可分别构建、分别部署、分别扩缩容；后端部署清单位于 `backend/deploy/`。
 
 ## 界面预览
 
@@ -50,6 +51,8 @@ base-admin-core/
 │   │   ├── response/            统一响应封装与参数绑定
 │   │   └── session/             Redis 会话存取
 │   ├── migrations/              带 {{prefix}} 占位符的 SQL 迁移
+│   ├── deploy/                  后端部署清单
+│   │   └── k8s/                 ConfigMap / Secret（envFrom 覆盖 config.yaml）
 │   ├── config.yaml              全量配置（L1/L2/L3 分级，含默认值）
 │   └── .env.example             环境变量覆盖示例
 ├── frontend/                    Vben 5 monorepo（仅保留 Naive UI 应用）

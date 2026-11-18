@@ -474,7 +474,7 @@ EOF
 go run ./cmd/server
 ```
 
-生产环境不要把 `.env` 打进镜像；用 ConfigMap 提供 L1/L2，用 Secret 注入 L3。
+生产环境不要把 `.env` 打进镜像；用 ConfigMap 按需覆盖 L1/L2，用 Secret 注入 L3。清单中的 `${...}` 由云效流水线在 apply 前替换，K8s 本身不解析；现成清单见 [`backend/deploy/k8s/`](../../backend/deploy/k8s/)。
 
 ## 8. 相关文件
 
@@ -482,5 +482,6 @@ go run ./cmd/server
 - 全量配置模板：[`backend/config.yaml`](../../backend/config.yaml)
 - 环境变量覆盖示例：[`backend/.env.example`](../../backend/.env.example)
 - 配置测试：[`backend/internal/config/config_test.go`](../../backend/internal/config/config_test.go)
+- Kubernetes 配置清单：[`backend/deploy/k8s/README.md`](../../backend/deploy/k8s/README.md)
 - 架构说明中的配置章节：[`docs/architecture.md`](../architecture.md)
 - 部署与环境变量注入：[`docs/deployment.md`](../deployment.md)

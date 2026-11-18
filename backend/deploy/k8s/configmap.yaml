@@ -1,0 +1,55 @@
+# base-admin-core 后端非敏感配置（覆盖镜像内 config.yaml）
+#
+# ${VAR} 由云效流水线在 kubectl apply 前替换；K8s 不解析，直接 apply 会保存
+# 字面量。变量需先在云效变量组中定义。
+#
+# 只列需要覆盖的项；未列出的键使用 config.yaml 默认值。
+# Deployment 通过 envFrom.configMapRef 注入，同名环境变量覆盖 YAML。
+#
+# 必须定义：DB_HOST / DB_PORT / DB_USER / DB_NAME / DB_SSLMODE /
+#           REDIS_ADDRS / CORS_ALLOWED_ORIGINS
+# 口令与 JWT_SECRET 见 secret.yaml。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: base-admin-backend-config
+  labels:
+    app.kubernetes.io/name: base-admin-core
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: base-admin
+data:
+  # ---- L1 基础运行 ----
+  # 生产环境必须为 production，否则跳过生产校验。
+  APP_ENV: "production"
+  # 生产建议 JSON 日志，便于采集；config.yaml 默认 text。
+  LOG_FORMAT: "json"
+
+  # ---- L2 基础设施 ----
+  DB_HOST: "${DB_HOST}"
+  DB_PORT: "${DB_PORT}"
+  DB_USER: "${DB_USER}"
+  DB_NAME: "${DB_NAME}"
+  # 云数据库/跨节点连接建议 require；集群内无 TLS 时改为 disable。
+  DB_SSLMODE: "${DB_SSLMODE}"
+  # 与其他系统共库时按需覆盖；默认 base_。
+  # DB_TABLE_PREFIX: "${DB_TABLE_PREFIX}"
+
+  REDIS_ADDRS: "${REDIS_ADDRS}"
+  # 与其他系统共用 Redis 时按需覆盖；默认 base-admin:。
+  # REDIS_KEY_PREFIX: "${REDIS_KEY_PREFIX}"
+
+  # 实际前端 Origin；allow_credentials=true 时不能使用 "*"。
+  CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
+  # 前端使用 Cookie 时打开；此时 Origin 必须明确。
+  # CORS_ALLOW_CREDENTIALS: "${CORS_ALLOW_CREDENTIALS}"
+
+  # ---- 可选覆盖 ----
+  # Ingress/负载均衡后面填写代理网段；留空表示不信任任何代理。
+  # HTTP_TRUSTED_PROXIES: "${HTTP_TRUSTED_PROXIES}"
+  # 多副本建议 false，并用 Job 执行迁移。
+  # DB_MIGRATE: "${DB_MIGRATE}"
+  # 哨兵模式：
+  # REDIS_MODE: "${REDIS_MODE}"
+  # REDIS_MASTER_NAME: "${REDIS_MASTER_NAME}"
+  # 首次管理员邮箱：
+  # BOOTSTRAP_ADMIN_EMAIL: "${BOOTSTRAP_ADMIN_EMAIL}"
