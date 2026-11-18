@@ -36,8 +36,8 @@ http:
   addr: ":8080"                       # L1 监听地址
   read_header_timeout: 10s            # L1 读取请求头超时
   read_timeout: 30s                   # L1 读取完整请求超时
-  write_timeout: 60s                  # L1 写响应超时
-  request_timeout: 30s                # L1 单请求处理超时；0 表示不限制
+  write_timeout: 0s                   # L1 连接写截止时间；服务 SSE/WebSocket 时必须为 0，无长连接可设 60s
+  request_timeout: 30s                # L1 注入请求 context 的截止时间（预算）；0 表示不注入
   idle_timeout: 120s                  # L1 keep-alive 空闲超时
   shutdown_timeout: 20s               # L1 优雅退出等待时间
   max_body_bytes: 4194304             # L1 请求体上限（4 MiB）
@@ -67,6 +67,7 @@ database:
   conn_max_lifetime: 30m              # L2
   conn_max_idle_time: 5m              # L2
   slow_query_threshold: 200ms         # L2 慢查询日志阈值
+  statement_timeout: 5s               # L2 单条 SQL 上限；必须短于 http.request_timeout，0 表示不设置
   log_level: warn                     # L2 silent | error | warn | info
   migrate: true                       # L2 启动时执行内嵌迁移
 

@@ -88,6 +88,7 @@ const (
 	CodeConflict        = 40900
 	CodeTooManyAttempts = 42900
 	CodeInternal        = 50000
+	CodeRequestTimeout  = 50400
 )
 
 var (
@@ -111,6 +112,9 @@ var (
 	ErrTooManyAttempts = New(CodeTooManyAttempts, http.StatusTooManyRequests, "操作过于频繁，请稍后再试")
 	// ErrInternal reports an unexpected server failure.
 	ErrInternal = New(CodeInternal, http.StatusInternalServerError, "服务器内部错误")
+	// ErrRequestTimeout reports a request that exceeded its processing budget.
+	// 504 而不是 503：客户端可以照常重试，语义上是「上游没在时限内完成」。
+	ErrRequestTimeout = New(CodeRequestTimeout, http.StatusGatewayTimeout, "请求处理超时")
 
 	// ErrUserNotFound is a not-found error specialised for accounts.
 	ErrUserNotFound = New(40401, http.StatusNotFound, "用户不存在")

@@ -6,6 +6,8 @@
 package response
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -39,7 +41,14 @@ func NoContent(c *gin.Context) {
 // Fail renders err using the status and business code carried by *apperr.Error.
 // Unexpected errors are logged with their cause and reported as a generic
 // internal error so implementation details never reach the client.
+//
+// 下游（数据库、Redis、出站 HTTP）因请求上下文到期而失败时，语义是「请求超时」
+// 而不是服务器故障，因此这里统一折算成 504 / 50400，避免前端把慢查询当成 500。
 func Fail(c *gin.Context, err error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = apperr.ErrRequestTimeout.Wrap(err)
+	}
+
 	appErr := apperr.From(err)
 	if appErr == nil {
 		NoContent(c)

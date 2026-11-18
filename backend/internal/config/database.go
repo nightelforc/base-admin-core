@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/nightelforc/base-admin-core/backend/pkg/postgres"
@@ -32,6 +33,11 @@ type Database struct {
 	SlowQueryThreshold time.Duration `env:"SLOW_QUERY_THRESHOLD" envDefault:"200ms" yaml:"slow_query_threshold"`
 	LogLevel           string        `env:"LOG_LEVEL" envDefault:"warn" validate:"required,oneof=silent error warn info" yaml:"log_level"`
 
+	// StatementTimeout 让 PostgreSQL 自己给单条语句设上限。请求超时只能让调用方
+	// 提前放弃，服务端语句仍会继续跑；这个参数才是数据库侧的止损点。0 表示不设置。
+	// 该值不含迁移：迁移走 DSN()，因为大表的 DDL 合法地超过应用查询的时限。
+	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT" envDefault:"5s" yaml:"statement_timeout"`
+
 	// Migrate 控制启动时是否执行内嵌的 SQL 迁移。
 	Migrate bool `env:"MIGRATE" envDefault:"true" yaml:"migrate"`
 }
@@ -48,12 +54,23 @@ func (d Database) validate() problems {
 	if d.MaxIdleConns > d.MaxOpenConns {
 		p.add("DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS")
 	}
+	if d.StatementTimeout < 0 {
+		p.add("DB_STATEMENT_TIMEOUT must not be negative")
+	}
 	return p
 }
 
-// DSN 生成 libpq / pgx 兼容的连接串。查询串是手工拼的：url.Values 会转义
+// DSN 生成 libpq / pgx 兼容的连接串，不含语句超时：迁移沿用它，因为大表的
+// DDL 可能合法地跑过应用查询的时限。查询串是手工拼的：url.Values 会转义
 // Asia/Shanghai 这类时区中的斜杠，PostgreSQL 随后会把它当成未知时区拒绝。
-func (d Database) DSN() string {
+func (d Database) DSN() string { return d.dsn(0) }
+
+// AppDSN 是应用连接池使用的连接串：在 DSN 之上带 statement_timeout。
+// 之所以放进连接串而不是逐条执行 SET，是因为它按会话生效，连接池复用连接时
+// 不必再补一次，也不会漏掉任何一个新建的连接。
+func (d Database) AppDSN() string { return d.dsn(d.StatementTimeout) }
+
+func (d Database) dsn(statementTimeout time.Duration) string {
 	u := url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(d.User, d.Password),
@@ -64,6 +81,9 @@ func (d Database) DSN() string {
 	query := "sslmode=" + d.SSLMode
 	if d.TimeZone != "" {
 		query += "&TimeZone=" + d.TimeZone
+	}
+	if statementTimeout > 0 {
+		query += "&statement_timeout=" + strconv.FormatInt(statementTimeout.Milliseconds(), 10)
 	}
 	u.RawQuery = query
 	return u.String()
@@ -77,7 +97,7 @@ func (d Database) DSN() string {
 // slog.Default，所以这个返回值本身就是完整可用的。
 func (d Database) Options() postgres.Options {
 	return postgres.Options{
-		DSN:                d.DSN(),
+		DSN:                d.AppDSN(),
 		TablePrefix:        d.TablePrefix,
 		MaxOpenConns:       d.MaxOpenConns,
 		MaxIdleConns:       d.MaxIdleConns,

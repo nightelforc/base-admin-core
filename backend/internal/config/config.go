@@ -170,8 +170,20 @@ func (c *Config) Validate() error {
 	p.extend(c.JWT.validate())
 	p.extend(c.Security.validate())
 	p.extend(c.CORS.validate())
+	p.extend(c.validateTimeouts())
 	p.extend(c.validateProduction())
 	return p.err()
+}
+
+// validateTimeouts 保证数据库语句超时早于请求超时。反过来的话，请求早已返回
+// 504、连接也还给了池子，数据库里的语句却还在跑，这个超时等于白设。
+func (c *Config) validateTimeouts() problems {
+	var p problems
+	if c.HTTP.RequestTimeout > 0 && c.Database.StatementTimeout > 0 &&
+		c.Database.StatementTimeout >= c.HTTP.RequestTimeout {
+		p.add("DB_STATEMENT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
+	}
+	return p
 }
 
 // validateProduction 汇总只在生产环境生效的部署策略。这些规则跨多个组件，

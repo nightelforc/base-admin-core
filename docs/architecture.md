@@ -49,13 +49,42 @@ pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis
 
 - 生产环境（`APP_ENV=production`）额外拒绝：示例/默认密钥、`CORS_ALLOWED_ORIGINS=*` 同时开启凭证、`APP_DEBUG=true`。
 - `DB_TABLE_PREFIX` 只允许 `^[a-z][a-z0-9_]*$`（或空），避免拼接出非法表名。
-- HTTP / Redis 的超时以及登录窗口、封禁时长必须为正数，`HTTP_IDLE_TIMEOUT`、`CORS_MAX_AGE`、`HTTP_REQUEST_TIMEOUT` 不得为负。
-- `HTTP_REQUEST_TIMEOUT` 控制单请求处理时长；超时返回 504 并取消请求上下文，下游数据库/Redis 调用随之中断。`0` 表示关闭，启用时必须小于 `HTTP_WRITE_TIMEOUT`，否则连接会先被写超时掐断。
+- HTTP / Redis 的超时以及登录窗口、封禁时长必须为正数；`HTTP_IDLE_TIMEOUT`、`CORS_MAX_AGE`、`HTTP_REQUEST_TIMEOUT` 不得为负，`HTTP_WRITE_TIMEOUT` 允许为 `0`（服务长连接时必须为 0）。
+- `HTTP_REQUEST_TIMEOUT` 是注入请求 context 的处理预算，到点后下游调用随上下文取消而中断、处理器返回 504。`0` 表示不注入；启用且设置了 `HTTP_WRITE_TIMEOUT` 时必须更短，否则连接会先被写超时掐断。
+- `DB_STATEMENT_TIMEOUT` 是数据库侧的止损点，必须短于 `HTTP_REQUEST_TIMEOUT`。请求超时只会让调用方放弃，服务端的语句仍在跑；只有语句超时能真正终止它。它只作用于应用连接池，迁移走不带该参数的 `DSN()`，因为大表的 DDL 可能合法地跑得更久。
 - `JWT_SECRET` 至少 32 字符，缺失或过短直接启动失败。
 - 日志启动时输出 `config.Summary()`，敏感字段已脱敏。
 
 配置项、默认值与分级注释见 [`backend/config.yaml`](../backend/config.yaml)；需要按环境覆盖的示例见 [`backend/.env.example`](../backend/.env.example)。
 装配顺序、配置文件查找与扩展方式见 [`docs/backend/config.md`](backend/config.md)。
+
+### 超时预算与长连接
+
+超时只有一种做法：**注入截止时间，由下游各自兑现**。`internal/server/deadline.go` 把 `HTTP_REQUEST_TIMEOUT` 写进请求 context，然后什么都不做——不缓冲响应、不替处理器写超时响应、不碰 `Flush`/`Hijack`。因此 SSE、WebSocket、流式下载与普通 CRUD 走同一条路径，没有前缀特判。
+
+缓冲区换来的「硬 504」代价太大：响应必须全量驻留内存，长连接在第一次 `Flush` 之前一条数据都发不出去，`Hijack` 之后包装层还要小心不写坏握手。业内（k8s apiserver 只对非长请求计时、Hystrix 的每依赖超时预算）都是让超时沿着调用链逐层收紧。
+
+预算逐层变短，避免下游比上游活得久：
+
+```
+反向代理 45s  >  HTTP_REQUEST_TIMEOUT 30s  >  DB_STATEMENT_TIMEOUT 5s
+```
+
+各层怎么兑现自己的预算：
+
+| 层 | 机制 | 到点后的表现 |
+| --- | --- | --- |
+| HTTP 请求 | context 截止时间 | 下游调用返回 `context.DeadlineExceeded`，处理器经 `response.Fail` 输出 504 / 50400 |
+| PostgreSQL | `DB_STATEMENT_TIMEOUT`（连接级 `statement_timeout`） | 服务端主动终止语句，连接可用 |
+| Redis | 连接级读写超时 | 单个命令返回超时错误 |
+| 审计写入 | 独立 `context.Background()` + 5s | 不随请求取消，避免丢审计 |
+| 出站 HTTP | 每次调用自带 `context.WithTimeout` | 调用方按需设置，沿 context 取消 |
+
+长连接部署有三个前提：
+
+- `HTTP_WRITE_TIMEOUT` 必须为 `0`（也是默认值）。它是 Go 的绝对写 deadline，从读完请求头开始计时，非 0 时 SSE 会在该时刻被拦腰截断；不提供长连接的服务可以设为 60s 来限制慢客户端。
+- 反向代理要关闭缓冲并放宽空闲超时：`proxy_buffering off;`、`X-Accel-Buffering: no`、`proxy_read_timeout 3600s;`；WebSocket 还需透传 `Upgrade` / `Connection`。
+- 响应以一条注释行（如 `: connected`）开场并立即 `Flush`，让代理与客户端尽早确认连接可用，也便于排查「事件没到」是不是卡在缓冲里。
 
 ## 3. 表前缀与迁移
 

@@ -24,11 +24,14 @@ type Server struct {
 
 // New assembles the server. Timeouts come from configuration so a deployment
 // can tune them without a rebuild.
+//
+// 请求时限以 context 截止时间的形式注入（见 newDeadlineHandler）：响应不经过
+// 任何缓冲，处理器与长连接都能自由写入，超时响应由处理器自己决定。
 func New(cfg *config.Config, engine *gin.Engine, log *slog.Logger, operations *middleware.OperationLogger) *Server {
 	return &Server{
 		http: &http.Server{
 			Addr:              cfg.HTTP.Addr,
-			Handler:           newRequestTimeoutHandler(engine, cfg.HTTP.RequestTimeout, log),
+			Handler:           newDeadlineHandler(engine, cfg.HTTP.RequestTimeout, log),
 			ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 			ReadTimeout:       cfg.HTTP.ReadTimeout,
 			WriteTimeout:      cfg.HTTP.WriteTimeout,
