@@ -30,6 +30,8 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/go-playground/validator/v10"
 	"gopkg.in/yaml.v3"
+
+	"github.com/nightelforc/base-admin-core/backend/pkg/redis"
 )
 
 // 应用支持的运行环境。
@@ -148,6 +150,29 @@ func (c *Config) Validate() error {
 	if c.Redis.KeyPrefix == "" {
 		problems = append(problems, "REDIS_KEY_PREFIX must not be empty")
 	}
+	// 两种模式各自必填的项不同：单机要恰好一个数据节点地址，哨兵要主节点名与
+	// 至少一个哨兵地址。配错就退回单机是最危险的失败方式——请求会打到别的实例
+	// 上，因此在这里拦下。空字符串地址也要拒绝：go-redis 收到空 Addr 会回落到
+	// 127.0.0.1:6379，等于静默连错地方。
+	for _, addr := range c.Redis.Addrs {
+		if strings.TrimSpace(addr) == "" {
+			problems = append(problems, "REDIS_ADDRS must not contain empty addresses")
+			break
+		}
+	}
+	switch c.Redis.Mode {
+	case redis.ModeStandalone:
+		if len(c.Redis.Addrs) != 1 {
+			problems = append(problems, fmt.Sprintf("REDIS_ADDRS must contain exactly one address when REDIS_MODE=standalone, got %d", len(c.Redis.Addrs)))
+		}
+	case redis.ModeSentinel:
+		if strings.TrimSpace(c.Redis.MasterName) == "" {
+			problems = append(problems, "REDIS_MASTER_NAME is required when REDIS_MODE=sentinel")
+		}
+		if len(c.Redis.Addrs) == 0 {
+			problems = append(problems, "REDIS_ADDRS must list at least one sentinel address when REDIS_MODE=sentinel")
+		}
+	}
 	if _, err := time.LoadLocation(c.App.Timezone); err != nil {
 		problems = append(problems, fmt.Sprintf("APP_TIMEZONE %q is not a known IANA time zone", c.App.Timezone))
 	}
@@ -255,7 +280,9 @@ func (c *Config) Summary() map[string]any {
 		"db_ssl":       c.Database.SSLMode,
 		"table_prefix": c.Database.TablePrefix,
 		"migrate":      c.Database.Migrate,
-		"redis_addr":   c.Redis.Addr,
+		"redis_mode":   c.Redis.Mode,
+		"redis_addrs":  strings.Join(c.Redis.Addrs, ","),
+		"redis_master": c.Redis.MasterName,
 		"redis_db":     c.Redis.DB,
 		"redis_prefix": c.Redis.KeyPrefix,
 		"jwt_issuer":   c.JWT.Issuer,

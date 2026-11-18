@@ -71,7 +71,11 @@ database:
   migrate: true                       # L2 启动时执行内嵌迁移
 
 redis:
-  addr: 127.0.0.1:6379                # L2
+  mode: standalone                    # L2 standalone | sentinel（集群模式未实现）
+  addrs: ["127.0.0.1:6379"]           # L2 单机：恰好一个数据节点；哨兵：哨兵节点列表
+  master_name: ""                     # L2 哨兵模式必填：主节点名
+  sentinel_username: ""               # L3 可选，连接哨兵本身的 ACL 用户名
+  sentinel_password: ""               # L3 由 REDIS_SENTINEL_PASSWORD / Secret 注入
   username: ""                        # L3 可选 ACL 用户名
   password: ""                        # L3 由 REDIS_PASSWORD / Secret 注入
   db: 0                               # L2
@@ -80,6 +84,8 @@ redis:
   read_timeout: 3s                    # L2
   write_timeout: 3s                   # L2
   pool_size: 20                       # L2
+  route_by_latency: false             # L2 仅哨兵模式：只读命令按延迟路由到从节点
+  route_randomly: false               # L2 仅哨兵模式：只读命令随机路由到从节点
 
 cors:
   allowed_origins: ["*"]              # L2 生产环境应改为明确域名

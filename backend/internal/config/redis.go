@@ -7,8 +7,23 @@ import (
 )
 
 // Redis 保存 Redis 连接设置。
+//
+// 部署形态由 Mode 选择：standalone（默认）直连 Addrs 里那唯一的数据节点；
+// sentinel 把 Addrs 当作哨兵节点列表，再经 MasterName 查出主节点，主从切换由
+// 客户端内部完成，调用方无需感知。
+// 集群模式未实现：它需要 hash tag 与跨槽事务层面的改造，属于独立的一步。
 type Redis struct {
-	Addr         string        `env:"ADDR" envDefault:"127.0.0.1:6379" validate:"required" yaml:"addr"`
+	Mode string `env:"MODE" envDefault:"standalone" validate:"required,oneof=standalone sentinel" yaml:"mode"`
+
+	// Addrs 是连接目标地址列表：单机模式下恰好一个（数据节点本身），哨兵模式下
+	// 是哨兵节点列表。默认值只适合单机，切到哨兵时要整体替换成哨兵地址。
+	Addrs []string `env:"ADDRS" envSeparator:"," envDefault:"127.0.0.1:6379" yaml:"addrs"`
+
+	// 以下三项只在哨兵模式下使用。
+	MasterName       string `env:"MASTER_NAME" yaml:"master_name"`
+	SentinelUsername string `env:"SENTINEL_USERNAME" yaml:"sentinel_username"`
+	SentinelPassword string `env:"SENTINEL_PASSWORD" yaml:"sentinel_password"`
+
 	Username     string        `env:"USERNAME" yaml:"username"`
 	Password     string        `env:"PASSWORD" yaml:"password"`
 	DB           int           `env:"DB" envDefault:"0" validate:"min=0" yaml:"db"`
@@ -17,6 +32,10 @@ type Redis struct {
 	ReadTimeout  time.Duration `env:"READ_TIMEOUT" envDefault:"3s" yaml:"read_timeout"`
 	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"3s" yaml:"write_timeout"`
 	PoolSize     int           `env:"POOL_SIZE" envDefault:"20" validate:"min=1" yaml:"pool_size"`
+
+	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
+	RouteByLatency bool `env:"ROUTE_BY_LATENCY" envDefault:"false" yaml:"route_by_latency"`
+	RouteRandomly  bool `env:"ROUTE_RANDOMLY" envDefault:"false" yaml:"route_randomly"`
 }
 
 // Options 把 Redis 配置转换成客户端的连接参数。
@@ -26,13 +45,19 @@ type Redis struct {
 // Options 全是纯数据，所以这里是完整映射，不需要像 Database 那样留运行时字段。
 func (r Redis) Options() redis.Options {
 	return redis.Options{
-		Addr:         r.Addr,
-		Username:     r.Username,
-		Password:     r.Password,
-		DB:           r.DB,
-		DialTimeout:  r.DialTimeout,
-		ReadTimeout:  r.ReadTimeout,
-		WriteTimeout: r.WriteTimeout,
-		PoolSize:     r.PoolSize,
+		Mode:             r.Mode,
+		Addrs:            r.Addrs,
+		MasterName:       r.MasterName,
+		SentinelUsername: r.SentinelUsername,
+		SentinelPassword: r.SentinelPassword,
+		Username:         r.Username,
+		Password:         r.Password,
+		DB:               r.DB,
+		DialTimeout:      r.DialTimeout,
+		ReadTimeout:      r.ReadTimeout,
+		WriteTimeout:     r.WriteTimeout,
+		PoolSize:         r.PoolSize,
+		RouteByLatency:   r.RouteByLatency,
+		RouteRandomly:    r.RouteRandomly,
 	}
 }

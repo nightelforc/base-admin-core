@@ -128,7 +128,10 @@ make check                # 前后端一起检查
 | `HTTP_REQUEST_TIMEOUT` | `30s` | 单请求处理时限，超时返回 504；`0` 关闭 |
 | `DB_TABLE_PREFIX` | `base_` | 数据表统一前缀，可为空 |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | - | PostgreSQL 连接 |
-| `REDIS_ADDR` / `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | - | Redis 连接 |
+| `REDIS_MODE` | `standalone` | `standalone` 直连；`sentinel` 经哨兵发现主节点 |
+| `REDIS_ADDRS` | `127.0.0.1:6379` | 连接目标地址，逗号分隔；单机恰好一个，哨兵填哨兵节点 |
+| `REDIS_MASTER_NAME` | - | 哨兵模式必填：主节点名 |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | - | 数据节点凭据与库号 |
 | `REDIS_KEY_PREFIX` | `base-admin:` | Redis key 命名空间，避免与其他系统冲突 |
 | `JWT_SECRET` | - | 必填，至少 32 字符（`openssl rand -base64 48`） |
 | `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL` | `30m` / `168h` | access / refresh 有效期 |

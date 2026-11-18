@@ -264,7 +264,7 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | `app.name` | `APP_NAME` |
 | `http.request_timeout` | `HTTP_REQUEST_TIMEOUT` |
 | `database.password` | `DB_PASSWORD`（不是 `DATABASE_PASSWORD`） |
-| `redis.addr` | `REDIS_ADDR` |
+| `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
 | `jwt.secret` | `JWT_SECRET` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
 

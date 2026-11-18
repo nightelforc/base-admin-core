@@ -129,3 +129,102 @@ func TestLoadRequiresConfigFile(t *testing.T) {
 		t.Fatalf("Load error = %v, want config file not found", err)
 	}
 }
+
+func TestLoadSentinelModeRequiresMasterName(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  mode: sentinel
+  addrs: ["127.0.0.1:26379"]
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REDIS_MASTER_NAME") {
+		t.Fatalf("Load error = %v, want REDIS_MASTER_NAME rejection", err)
+	}
+}
+
+func TestLoadSentinelModeRequiresAddrs(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  mode: sentinel
+  master_name: mymaster
+  addrs: []
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REDIS_ADDRS") {
+		t.Fatalf("Load error = %v, want REDIS_ADDRS rejection", err)
+	}
+}
+
+func TestLoadStandaloneRejectsMultipleAddrs(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  addrs: ["127.0.0.1:6379", "127.0.0.1:6380"]
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "exactly one address") {
+		t.Fatalf("Load error = %v, want single-address rejection", err)
+	}
+}
+
+func TestLoadAcceptsSentinelMode(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  mode: sentinel
+  master_name: mymaster
+  addrs: ["10.0.0.11:26379", "10.0.0.12:26379"]
+  sentinel_password: sentinel-secret
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Redis.Addrs) != 2 {
+		t.Fatalf("addrs = %v, want 2 addresses", cfg.Redis.Addrs)
+	}
+
+	opts := cfg.Redis.Options()
+	if opts.Mode != "sentinel" || opts.MasterName != "mymaster" || len(opts.Addrs) != 2 {
+		t.Fatalf("Options() = %+v, want sentinel mapping", opts)
+	}
+}
+
+func TestLoadRedisAddrsFromEnvironment(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  mode: sentinel
+  master_name: mymaster
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+	t.Setenv("REDIS_ADDRS", "10.0.0.11:26379,10.0.0.12:26379")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Redis.Addrs) != 2 || cfg.Redis.Addrs[1] != "10.0.0.12:26379" {
+		t.Fatalf("addrs = %v, want env value split into 2 addresses", cfg.Redis.Addrs)
+	}
+}
+
+func TestLoadRejectsUnknownRedisMode(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  mode: cluster
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "Mode") {
+		t.Fatalf("Load error = %v, want mode validation error", err)
+	}
+}
