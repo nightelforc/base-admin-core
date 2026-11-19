@@ -1,8 +1,7 @@
-// Package response renders the uniform JSON envelope consumed by the frontend.
+// Package response 渲染前端消费的统一 JSON 响应信封。
 //
-// Success payloads are `{"code":0,"message":"ok","data":...}`; failures keep the
-// same shape with a non-zero business code. Code 0 is the contract the Vben
-// request client treats as success (defaultResponseInterceptor.successCode).
+// 成功载荷为 `{"code":0,"message":"ok","data":...}`；失败保持同一形状，业务码非零。
+// 码 0 是 Vben 请求客户端视为成功的约定（defaultResponseInterceptor.successCode）。
 package response
 
 import (
@@ -16,31 +15,30 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/pkg/logger"
 )
 
-// Envelope is the transport shape of every API response.
+// Envelope 是每个 API 响应的传输形态。
 type Envelope struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
 }
 
-// OK writes a successful response with HTTP 200.
+// OK 写出 HTTP 200 的成功响应。
 func OK(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, Envelope{Code: apperr.CodeSuccess, Message: "ok", Data: data})
 }
 
-// Created writes a successful response with HTTP 201.
+// Created 写出 HTTP 201 的成功响应。
 func Created(c *gin.Context, data any) {
 	c.JSON(http.StatusCreated, Envelope{Code: apperr.CodeSuccess, Message: "ok", Data: data})
 }
 
-// NoContent writes a successful response with an empty payload.
+// NoContent 写出载荷为空的成功响应。
 func NoContent(c *gin.Context) {
 	c.JSON(http.StatusOK, Envelope{Code: apperr.CodeSuccess, Message: "ok"})
 }
 
-// Fail renders err using the status and business code carried by *apperr.Error.
-// Unexpected errors are logged with their cause and reported as a generic
-// internal error so implementation details never reach the client.
+// Fail 按 *apperr.Error 携带的状态与业务码渲染 err。
+// 意外错误会连同其原因写入日志，并向外报告为通用内部错误，使实现细节不会到达客户端。
 //
 // 下游（数据库、Redis、出站 HTTP）因请求上下文到期而失败时，语义是「请求超时」
 // 而不是服务器故障，因此这里统一折算成 504 / 50400，避免前端把慢查询当成 500。
@@ -76,7 +74,7 @@ func Fail(c *gin.Context, err error) {
 	c.AbortWithStatusJSON(appErr.HTTPStatus, Envelope{Code: appErr.Code, Message: message})
 }
 
-// Page is the paginated list payload.
+// Page 是分页列表载荷。
 type Page[T any] struct {
 	List     []T   `json:"list"`
 	Total    int64 `json:"total"`
@@ -84,8 +82,7 @@ type Page[T any] struct {
 	PageSize int   `json:"pageSize"`
 }
 
-// NewPage builds a paginated payload, normalising a nil slice to an empty one so
-// the client always receives an array.
+// NewPage 构建分页载荷，把 nil 切片规范为空切片，使客户端始终收到数组。
 func NewPage[T any](list []T, total int64, page, pageSize int) Page[T] {
 	if list == nil {
 		list = []T{}

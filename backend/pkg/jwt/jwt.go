@@ -1,8 +1,6 @@
-// Package jwt issues and verifies the application's HS256 access and refresh
-// tokens.
+// Package jwt 签发并验证应用的 HS256 访问令牌与刷新令牌。
 //
-// Tokens are signed with a single symmetric secret, so the package deliberately
-// pins HS256 and never trusts the algorithm named in the token header.
+// 令牌使用单一对称密钥签名，因此本包刻意固定 HS256，绝不信任令牌头中声明的算法。
 package jwt
 
 import (
@@ -16,21 +14,19 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
-// Type distinguishes access tokens from refresh tokens so a refresh token can
-// never be replayed as an access token.
+// Type 区分访问令牌与刷新令牌，使刷新令牌永远不能被重放为访问令牌。
 type Type string
 
 const (
-	// TypeAccess authorises API calls.
+	// TypeAccess 授权 API 调用。
 	TypeAccess Type = "access"
-	// TypeRefresh exchanges for a new token pair.
+	// TypeRefresh 用于换取新的令牌对。
 	TypeRefresh Type = "refresh"
 )
 
-// Claims is the JWT payload.
+// Claims 是 JWT 载荷。
 //
-// SessionID ties the token to a server-side session record, which is what makes
-// logout and forced revocation effective for otherwise stateless JWTs.
+// SessionID 把令牌绑定到服务端会话记录，从而使登出和强制吊销对原本无状态的 JWT 立即生效。
 type Claims struct {
 	UserID    int64  `json:"uid"`
 	Username  string `json:"uname"`
@@ -39,7 +35,7 @@ type Claims struct {
 	jwtlib.RegisteredClaims
 }
 
-// Manager issues and verifies tokens.
+// Manager 签发并验证令牌。
 type Manager struct {
 	secret     []byte
 	issuer     string
@@ -48,21 +44,21 @@ type Manager struct {
 	refreshTTL time.Duration
 }
 
-// Options configures a Manager.
+// Options 配置 Manager。
 type Options struct {
-	// Secret signs and verifies HS256 tokens; must stay server-side only.
+	// Secret 用于签发并验证 HS256 令牌；必须只保留在服务端。
 	Secret string
-	// Issuer is written to (and verified from) the iss claim.
+	// Issuer 写入 iss 声明，并在验证时核对。
 	Issuer string
-	// Audience is written to (and verified from) the aud claim.
+	// Audience 写入 aud 声明，并在验证时核对。
 	Audience string
-	// AccessTTL bounds an access token's lifetime.
+	// AccessTTL 限制访问令牌的有效期。
 	AccessTTL time.Duration
-	// RefreshTTL bounds a refresh token's lifetime.
+	// RefreshTTL 限制刷新令牌的有效期。
 	RefreshTTL time.Duration
 }
 
-// NewManager builds a manager from configuration.
+// NewManager 根据配置构建管理器。
 func NewManager(opts Options) *Manager {
 	return &Manager{
 		secret:     []byte(opts.Secret),
@@ -73,13 +69,13 @@ func NewManager(opts Options) *Manager {
 	}
 }
 
-// AccessTTL exposes the access token lifetime.
+// AccessTTL 暴露访问令牌的有效期。
 func (m *Manager) AccessTTL() time.Duration { return m.accessTTL }
 
-// RefreshTTL exposes the refresh token lifetime.
+// RefreshTTL 暴露刷新令牌的有效期。
 func (m *Manager) RefreshTTL() time.Duration { return m.refreshTTL }
 
-// Issue signs a token of the requested type and returns it with its expiry.
+// Issue 签发指定类型的令牌，并连同过期时间一并返回。
 func (m *Manager) Issue(userID int64, username, sessionID string, tokenType Type) (string, time.Time, error) {
 	ttl := m.accessTTL
 	if tokenType == TypeRefresh {
@@ -111,7 +107,7 @@ func (m *Manager) Issue(userID int64, username, sessionID string, tokenType Type
 	return signed, expiresAt, nil
 }
 
-// Parse verifies a token and checks that it is of the expected type.
+// Parse 验证令牌，并检查其类型是否符合预期。
 func (m *Manager) Parse(tokenString string, expected Type) (*Claims, error) {
 	claims := &Claims{}
 	_, err := jwtlib.ParseWithClaims(tokenString, claims, func(_ *jwtlib.Token) (any, error) {

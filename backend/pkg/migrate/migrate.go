@@ -1,16 +1,13 @@
-// Package migrate applies the embedded SQL migrations exactly once, in order.
+// Package migrate 按顺序恰好应用一次内嵌的 SQL 迁移。
 //
-// Design notes:
-//   - SQL files are the source of truth (no AutoMigrate), so the physical schema
-//     is reviewable and identical across environments.
-//   - Every file is templated with {{prefix}}; the runner substitutes the
-//     configured DB_TABLE_PREFIX, which makes several deployments shareable in a
-//     single PostgreSQL schema.
-//   - Each file runs inside one transaction and is recorded with its SHA-256
-//     checksum. A changed checksum on an already-applied file is a hard error:
-//     never edit an applied migration, add a new one instead.
-//   - A PostgreSQL advisory lock keyed on the migrations table prevents two
-//     replicas from migrating concurrently at start-up.
+// 设计说明：
+//   - SQL 文件是唯一事实来源（不用 AutoMigrate），因此物理 schema 可评审，
+//     且在各环境中保持一致。
+//   - 每个文件都以 {{prefix}} 为模板；执行器替换配置的 DB_TABLE_PREFIX，
+//     使多套部署可以共用同一个 PostgreSQL schema。
+//   - 每个文件在一个事务内执行，并以 SHA-256 校验和记录。已应用文件的校验和
+//     发生变化是硬错误：绝不修改已应用的迁移，应新增一条。
+//   - 以迁移表为键的 PostgreSQL 咨询锁防止两个副本在启动时并发迁移。
 package migrate
 
 import (
@@ -28,33 +25,32 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// PrefixPlaceholder is the token replaced by the configured table prefix.
+// PrefixPlaceholder 是由配置的表前缀替换的占位记号。
 const PrefixPlaceholder = "{{prefix}}"
 
-// prefixPattern guards identifier interpolation: a prefix ends up verbatim in
-// DDL, so anything but lowercase identifiers is rejected.
+// prefixPattern 约束标识符插值：前缀会原样进入 DDL，因此除小写标识符外一律拒绝。
 var prefixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$|^$`)
 
-// File is a single migration ready to be applied.
+// File 是一条准备应用的迁移。
 type File struct {
 	Name     string
 	SQL      string
 	Checksum string
 }
 
-// Options describes one migration run.
+// Options 描述一次迁移运行。
 type Options struct {
-	// FS holds the .sql migration files; embedded by the caller.
+	// FS 持有 .sql 迁移文件；由调用方嵌入。
 	FS fs.FS
-	// DSN is the PostgreSQL connection string.
+	// DSN 是 PostgreSQL 连接串。
 	DSN string
-	// Prefix is substituted for {{prefix}} and names the bookkeeping table.
+	// Prefix 替换 {{prefix}}，并用于命名记账表。
 	Prefix string
-	// Log receives progress and failure records; nil falls back to slog.Default.
+	// Log 接收进度与失败记录；为 nil 时回落到 slog.Default。
 	Log *slog.Logger
 }
 
-// Run applies all pending migrations and returns how many were executed.
+// Run 应用全部待执行迁移，并返回执行了多少条。
 func Run(ctx context.Context, opts Options) (int, error) {
 	if opts.FS == nil {
 		return 0, fmt.Errorf("migrate: no migration filesystem provided")
@@ -77,8 +73,7 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("migrate: parse database dsn: %w", err)
 	}
-	// Simple protocol allows a whole migration file (multiple statements) to be
-	// sent as one Exec inside the transaction.
+	// 简单协议允许把整个迁移文件（多条语句）作为事务内的一次 Exec 发送。
 	connConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	connectCtx, cancelConnect := context.WithTimeout(ctx, 30*time.Second)
@@ -96,8 +91,7 @@ func Run(ctx context.Context, opts Options) (int, error) {
 
 	table := opts.Prefix + "schema_migrations"
 
-	// Serialise concurrent migrators. The lock is released by the deferred
-	// unlock (or automatically when the session ends).
+	// 串行化并发的迁移执行器。锁由延迟的解锁释放（或在会话结束时自动释放）。
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", table); err != nil {
 		return 0, fmt.Errorf("migrate: acquire advisory lock: %w", err)
 	}
@@ -141,7 +135,7 @@ func Run(ctx context.Context, opts Options) (int, error) {
 	return pending, nil
 }
 
-// Load reads, sorts and renders every embedded migration.
+// Load 读取、排序并渲染每一条内嵌迁移。
 func Load(fsys fs.FS, prefix string) ([]File, error) {
 	if !prefixPattern.MatchString(prefix) {
 		return nil, fmt.Errorf("migrate: invalid table prefix %q", prefix)
@@ -169,7 +163,7 @@ func Load(fsys fs.FS, prefix string) ([]File, error) {
 	return files, nil
 }
 
-// Render substitutes the table prefix placeholder.
+// Render 替换表前缀占位符。
 func Render(script, prefix string) string {
 	return strings.ReplaceAll(script, PrefixPlaceholder, prefix)
 }
@@ -239,7 +233,7 @@ func applyFile(ctx context.Context, conn *pgx.Conn, table string, file File) err
 	return nil
 }
 
-// quoteIdentifier renders a trusted (already validated) identifier.
+// quoteIdentifier 渲染一个可信（已经校验过）的标识符。
 func quoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

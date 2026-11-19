@@ -1,5 +1,4 @@
-// Package password hashes and verifies passwords with bcrypt and enforces the
-// application's password policy.
+// Package password 用 bcrypt 哈希并校验密码，并强制执行应用的密码策略。
 package password
 
 import (
@@ -15,27 +14,25 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
-// maxBytes is the hard limit imposed by bcrypt (72 bytes); longer input is
-// silently truncated by the algorithm, so it is rejected explicitly.
+// maxBytes 是 bcrypt 施加的硬限制（72 字节）；更长的输入会被算法静默截断，
+// 因此在这里显式拒绝。
 const maxBytes = 72
 
-// Hasher hashes and verifies passwords with a configurable bcrypt cost and
-// enforces the configured minimum length.
+// Hasher 以可配置的 bcrypt cost 哈希并校验密码，并强制执行配置的最小长度。
 type Hasher struct {
 	cost      int
 	minLength int
 }
 
-// Options configures a Hasher.
+// Options 配置 Hasher。
 type Options struct {
-	// Cost is the bcrypt work factor; out-of-range values fall back to the
-	// bcrypt default so a bad environment variable degrades safely.
+	// Cost 是 bcrypt 工作因子；超出范围的值回落到 bcrypt 默认值，使错误的环境变量安全降级。
 	Cost int
-	// MinLength is the shortest accepted password; values below 8 are raised.
+	// MinLength 是可接受的最短密码；低于 8 的值会被抬高。
 	MinLength int
 }
 
-// NewHasher builds a hasher from configuration.
+// NewHasher 根据配置构建哈希器。
 func NewHasher(opts Options) *Hasher {
 	cost := opts.Cost
 	if cost < bcrypt.MinCost || cost > bcrypt.MaxCost {
@@ -48,7 +45,7 @@ func NewHasher(opts Options) *Hasher {
 	return &Hasher{cost: cost, minLength: minLength}
 }
 
-// Hash returns the bcrypt digest of plain.
+// Hash 返回 plain 的 bcrypt 摘要。
 func (h *Hasher) Hash(plain string) (string, error) {
 	if err := h.Validate(plain); err != nil {
 		return "", err
@@ -60,13 +57,12 @@ func (h *Hasher) Hash(plain string) (string, error) {
 	return string(digest), nil
 }
 
-// Verify reports whether plain matches the stored digest.
+// Verify 报告 plain 是否与已存储的摘要匹配。
 func (h *Hasher) Verify(digest, plain string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(digest), []byte(plain)) == nil
 }
 
-// Validate enforces the password policy: bounded length and at least one letter
-// and one digit.
+// Validate 执行密码策略：长度有界，且至少包含一个字母和一个数字。
 func (h *Hasher) Validate(plain string) error {
 	if utf8.RuneCountInString(plain) < h.minLength {
 		return apperr.ErrPasswordTooWeak.WithMessage("密码长度不能少于 %d 位", h.minLength)
@@ -97,9 +93,8 @@ const (
 	symbols      = "!@#$%^&*"
 )
 
-// Random generates a password that satisfies the default policy: it always
-// contains upper case, lower case, a digit and a symbol. The symbol set avoids
-// characters that need escaping in shells and .env files.
+// Random 生成满足默认策略的密码：始终包含大写、小写、一个数字和一个符号。
+// 符号集避开了在 shell 与 .env 文件中需要转义的字符。
 func Random(length int) (string, error) {
 	if length < 8 {
 		length = 8
@@ -108,8 +103,7 @@ func Random(length int) (string, error) {
 	alphabet := upperLetters + lowerLetters + digits + symbols
 	generated := make([]byte, 0, length)
 
-	// Guarantee the four character classes first, then fill at random and
-	// shuffle so the mandated characters are not in fixed positions.
+	// 先保证四类字符各有一个，再随机填充并打乱，使强制出现的字符不落在固定位置。
 	for _, class := range []string{upperLetters, lowerLetters, digits, symbols} {
 		index, err := randomIndex(len(class))
 		if err != nil {

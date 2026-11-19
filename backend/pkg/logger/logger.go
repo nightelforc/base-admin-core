@@ -1,9 +1,7 @@
-// Package logger builds the process-wide structured logger and carries
-// request-scoped loggers through context.Context.
+// Package logger 构建进程级结构化日志器，并通过 context.Context 传递请求级日志器。
 //
-// It deliberately knows nothing about the application's configuration types:
-// callers map their own settings onto Options, which keeps the package
-// importable from other projects.
+// 它刻意不了解应用的配置类型：调用方把自己的设置映射到 Options，从而使本包
+// 可被其他项目导入。
 package logger
 
 import (
@@ -18,18 +16,17 @@ import (
 
 type contextKey struct{}
 
-// Options describes the root logger.
+// Options 描述根日志器。
 type Options struct {
-	// Level is one of debug, info, warn, error.
+	// Level 取 debug、info、warn、error 之一。
 	Level string
-	// Format is text (default) or json.
+	// Format 为 text（默认）或 json。
 	Format string
-	// AddSource annotates every record with the file:line of the call site.
+	// AddSource 为每条记录标注调用点的 file:line。
 	AddSource bool
 }
 
-// New builds the root logger from opts, installs it as the slog default and
-// returns it.
+// New 根据 opts 构建根日志器，将其设为 slog 默认日志器并返回。
 func New(opts Options) (*slog.Logger, error) {
 	handler, err := newHandler(opts, os.Stdout)
 	if err != nil {
@@ -41,8 +38,7 @@ func New(opts Options) (*slog.Logger, error) {
 	return log, nil
 }
 
-// newHandler is the testable half of New: it builds a handler for opts that
-// writes to w.
+// newHandler 是 New 中可测试的那一半：它按 opts 构建一个写入 w 的处理器。
 func newHandler(opts Options, w io.Writer) (slog.Handler, error) {
 	level, err := parseLevel(opts.Level)
 	if err != nil {
@@ -61,13 +57,11 @@ func newHandler(opts Options, w io.Writer) (slog.Handler, error) {
 	return slog.NewTextHandler(w, handlerOpts), nil
 }
 
-// replaceAttr normalises the built-in attributes before they are encoded:
-// level names are lowercased, and text records carry the same RFC 3339
-// timestamps the JSON handler writes by default.
+// replaceAttr 在编码前规范化内置属性：级别名转为小写，文本记录携带与 JSON
+// 处理器默认写出相同的 RFC 3339 时间戳。
 //
-// The JSON handler already encodes time.Time with time.RFC3339Nano and does so
-// without allocating, so rewriting the timestamp there would add a formatting
-// pass and an allocation to every record for byte-identical output.
+// JSON 处理器已经用 time.RFC3339Nano 编码 time.Time，且不额外分配，因此在那里
+// 重写时间戳只会给每条记录多一次格式化与一次分配，输出却逐字节相同。
 func replaceAttr(jsonFormat bool) func(groups []string, attr slog.Attr) slog.Attr {
 	return func(groups []string, attr slog.Attr) slog.Attr {
 		if len(groups) > 0 {
@@ -90,9 +84,8 @@ func replaceAttr(jsonFormat bool) func(groups []string, attr slog.Attr) slog.Att
 	}
 }
 
-// levelName returns the lowercase name of lvl. Both standard handlers emit
-// upper case names; named levels are mapped to constants so the common case
-// does not allocate, while levels in between keep their suffix (warn+2).
+// levelName 返回 lvl 的小写名称。两种标准处理器都输出大写名称；具名级别映射到
+// 常量，使常见情况不发生分配，介于其间的级别则保留后缀（warn+2）。
 func levelName(lvl slog.Level) string {
 	switch lvl {
 	case slog.LevelDebug:
@@ -123,15 +116,13 @@ func parseLevel(level string) (slog.Level, error) {
 	}
 }
 
-// IntoContext stores a request-scoped logger in the context. Layers that want
-// request attributes on their records (GORM, for one) resolve it with From
-// instead of capturing a logger at construction time.
+// IntoContext 把请求级日志器存入上下文。希望记录带上请求属性的层（例如 GORM）
+// 用 From 解析它，而不是在构造时捕获一个日志器。
 func IntoContext(ctx context.Context, log *slog.Logger) context.Context {
 	return context.WithValue(ctx, contextKey{}, log)
 }
 
-// From returns the request-scoped logger, or the default logger when the
-// context carries none.
+// From 返回请求级日志器；上下文未携带时返回默认日志器。
 func From(ctx context.Context) *slog.Logger {
 	if log, ok := fromContext(ctx); ok {
 		return log
@@ -139,9 +130,8 @@ func From(ctx context.Context) *slog.Logger {
 	return slog.Default()
 }
 
-// fromContext reports whether ctx carries a request-scoped logger. Callers that
-// already hold a process logger use the second result to decide between it and
-// the scoped logger instead of paying for a With on every record.
+// fromContext 报告 ctx 是否携带请求级日志器。已经持有进程日志器的调用方用第二个
+// 返回值在它与请求级日志器之间做选择，避免每条记录都付出一次 With 的代价。
 func fromContext(ctx context.Context) (*slog.Logger, bool) {
 	if ctx == nil {
 		return nil, false

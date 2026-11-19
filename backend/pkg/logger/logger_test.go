@@ -104,8 +104,8 @@ func TestReplaceAttrTextTimeUsesRFC3339Nano(t *testing.T) {
 	}
 }
 
-// The JSON handler already writes RFC 3339 timestamps, so the value must reach
-// the encoder untouched (a time.Time value, not a preformatted string).
+// JSON 处理器已经写出 RFC 3339 时间戳，因此该值必须原样到达编码器
+// （time.Time 值，而不是预先格式化的字符串）。
 func TestReplaceAttrJSONKeepsTimeValue(t *testing.T) {
 	ts := time.Date(2026, 11, 19, 16, 25, 21, 123456789, time.UTC)
 	got := replaceAttr(true)(nil, slog.Time(slog.TimeKey, ts))
@@ -137,8 +137,7 @@ func TestReplaceAttrLevelNames(t *testing.T) {
 	}
 }
 
-// Fields inside a group belong to the caller and must pass through unchanged,
-// even when they reuse a built-in key such as level.
+// 分组内的字段属于调用方，必须原样通过，即使它们复用了 level 这类内置键。
 func TestReplaceAttrLeavesGroupedFields(t *testing.T) {
 	attr := slog.Any(slog.LevelKey, slog.LevelInfo)
 	got := replaceAttr(false)([]string{"request"}, attr)

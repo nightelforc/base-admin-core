@@ -13,8 +13,7 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
-// BindJSON decodes and validates a JSON request body, translating binding and
-// validation failures into user-facing business errors.
+// BindJSON 解码并校验 JSON 请求体，把绑定与校验失败翻译成面向用户的业务错误。
 func BindJSON(c *gin.Context, target any) error {
 	if err := c.ShouldBindJSON(target); err != nil {
 		return translateBindError(err)
@@ -22,7 +21,7 @@ func BindJSON(c *gin.Context, target any) error {
 	return nil
 }
 
-// BindQuery decodes and validates query-string parameters.
+// BindQuery 解码并校验 query-string 参数。
 func BindQuery(c *gin.Context, target any) error {
 	if err := c.ShouldBindQuery(target); err != nil {
 		return translateBindError(err)
@@ -88,8 +87,8 @@ func describeFieldError(fieldErr validator.FieldError) string {
 	return fmt.Sprintf("%s 不满足校验规则 %s", name, fieldErr.Tag())
 }
 
-// jsonFieldName resolves the json tag of a struct field from its namespace path
-// such as "CreateUserRequest.Username"; it falls back to the raw field name.
+// jsonFieldName 从结构体字段的命名空间路径（例如 "CreateUserRequest.Username"）
+// 解析其 json tag；解析不到时回落到原始字段名。
 func jsonFieldName(namespace string) string {
 	parts := strings.Split(namespace, ".")
 	return parts[len(parts)-1]

@@ -1,9 +1,7 @@
-// Package session keeps login sessions in Redis.
+// Package session 把登录会话保存在 Redis 中。
 //
-// A session is the server-side half of an issued token pair: tokens carry the
-// session id, so deleting the record revokes every token derived from it. That
-// makes logout and forced sign-out immediate instead of waiting for an access
-// token to expire.
+// 会话是已签发令牌对的服务端那一半：令牌携带会话 id，因此删除该记录即可吊销
+// 由它派生的全部令牌。登出和强制下线因此立即生效，而不必等待访问令牌过期。
 package session
 
 import (
@@ -21,7 +19,7 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/pkg/apperr"
 )
 
-// Session is the stored record.
+// Session 是存储的记录。
 type Session struct {
 	ID        string    `json:"id"`
 	UserID    int64     `json:"user_id"`
@@ -31,17 +29,15 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Store keeps sessions under "{prefix}session:{id}" and tracks the sessions of a
-// user in "{prefix}user_sessions:{userID}" so a password change can revoke all
-// of them at once.
+// Store 把会话存在 "{prefix}session:{id}" 下，并在 "{prefix}user_sessions:{userID}"
+// 中跟踪某用户的会话，以便修改密码时一次吊销全部会话。
 type Store struct {
 	client *redis.Client
 	prefix string
 	ttl    time.Duration
 }
 
-// NewStore returns a store whose records outlive the refresh token by a little
-// so a refresh racing with expiry still succeeds.
+// NewStore 返回会话存储；其记录比刷新令牌稍长寿，使与过期竞态的刷新仍能成功。
 func NewStore(client *redis.Client, keyPrefix string, ttl time.Duration) *Store {
 	return &Store{
 		client: client,
@@ -56,7 +52,7 @@ func (s *Store) userKey(userID int64) string {
 	return s.prefix + "user_sessions:" + strconv.FormatInt(userID, 10)
 }
 
-// Create stores a new session.
+// Create 存储一条新会话。
 func (s *Store) Create(ctx context.Context, record Session) error {
 	payload, err := json.Marshal(record)
 	if err != nil {
@@ -73,7 +69,7 @@ func (s *Store) Create(ctx context.Context, record Session) error {
 	return nil
 }
 
-// Get returns the session or apperr.ErrUnauthorized when it is missing.
+// Get 返回会话；不存在时返回 apperr.ErrUnauthorized。
 func (s *Store) Get(ctx context.Context, id string) (*Session, error) {
 	if id == "" {
 		return nil, apperr.ErrUnauthorized
@@ -94,7 +90,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Session, error) {
 	return &record, nil
 }
 
-// Touch extends the session lifetime, called whenever a token is refreshed.
+// Touch 延长会话有效期，在令牌每次刷新时调用。
 func (s *Store) Touch(ctx context.Context, id string) error {
 	if err := s.client.Expire(ctx, s.key(id), s.ttl).Err(); err != nil {
 		return fmt.Errorf("session: touch: %w", err)
@@ -102,9 +98,8 @@ func (s *Store) Touch(ctx context.Context, id string) error {
 	return nil
 }
 
-// Delete revokes one session. A session that is already gone is not an error,
-// because logout must stay idempotent; infrastructure failures are returned so a
-// logout cannot claim success while the tokens stay valid.
+// Delete 吊销一条会话。会话已经不在不算错误，因为登出必须保持幂等；基础设施
+// 故障会被返回，避免令牌仍然有效时登出却声称成功。
 func (s *Store) Delete(ctx context.Context, id string) error {
 	record, err := s.Get(ctx, id)
 	if err != nil {
@@ -123,8 +118,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// DeleteAllForUser revokes every session of a user, used after a password change
-// or when an account is disabled.
+// DeleteAllForUser 吊销某用户的全部会话，用于修改密码之后或账号被禁用时。
 func (s *Store) DeleteAllForUser(ctx context.Context, userID int64) error {
 	ids, err := s.client.SMembers(ctx, s.userKey(userID)).Result()
 	if err != nil {
@@ -142,7 +136,7 @@ func (s *Store) DeleteAllForUser(ctx context.Context, userID int64) error {
 	return nil
 }
 
-// NewID returns a random, URL-safe session identifier.
+// NewID 返回一个随机、URL 安全的会话标识。
 func NewID() (string, error) {
 	buf := make([]byte, 24)
 	if _, err := rand.Read(buf); err != nil {

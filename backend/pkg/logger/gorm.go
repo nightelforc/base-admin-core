@@ -11,12 +11,11 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-// GormLogger adapts GORM's logging interface to slog so database diagnostics
-// share the application log pipeline (and its level/format configuration).
+// GormLogger 把 GORM 的日志接口适配到 slog，使数据库诊断与应用日志管线
+// （及其级别/格式配置）共用同一条通路。
 //
-// Records are written through the request-scoped logger when the context
-// carries one, so SQL statements inherit request_id (and any other attribute)
-// from the HTTP request that triggered them.
+// 当上下文携带请求级日志器时，记录经它写出，因此 SQL 语句会继承触发它的
+// HTTP 请求上的 request_id（以及任何其他属性）。
 type GormLogger struct {
 	log           *slog.Logger
 	level         gormlogger.LogLevel
@@ -25,8 +24,8 @@ type GormLogger struct {
 
 var _ gormlogger.Interface = (*GormLogger)(nil)
 
-// NewGormLogger builds a GORM logger writing through log.
-// The level is one of silent, error, warn or info.
+// NewGormLogger 构建一个经 log 写出的 GORM 日志器。
+// level 取 silent、error、warn 或 info 之一。
 func NewGormLogger(log *slog.Logger, level string, slowThreshold time.Duration) *GormLogger {
 	if log == nil {
 		log = slog.Default()
@@ -48,16 +47,15 @@ func NewGormLogger(log *slog.Logger, level string, slowThreshold time.Duration) 
 	return &GormLogger{log: log.With("component", "gorm"), level: lvl, slowThreshold: slowThreshold}
 }
 
-// LogMode implements gormlogger.Interface.
+// LogMode 实现 gormlogger.Interface。
 func (l *GormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
 	clone := *l
 	clone.level = level
 	return &clone
 }
 
-// logFor returns the logger for one record: the request-scoped logger when ctx
-// carries one, otherwise the process logger. The component attribute keeps
-// database records distinguishable from the request's own lines.
+// logFor 返回单条记录使用的日志器：ctx 携带请求级日志器时用它，否则用进程日志器。
+// component 属性使数据库记录与请求自身的日志行可以区分。
 func (l *GormLogger) logFor(ctx context.Context) *slog.Logger {
 	if scoped, ok := fromContext(ctx); ok {
 		return scoped.With("component", "gorm")
@@ -65,29 +63,29 @@ func (l *GormLogger) logFor(ctx context.Context) *slog.Logger {
 	return l.log
 }
 
-// Info implements gormlogger.Interface.
+// Info 实现 gormlogger.Interface。
 func (l *GormLogger) Info(ctx context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Info {
 		l.logFor(ctx).InfoContext(ctx, expand(msg, args...))
 	}
 }
 
-// Warn implements gormlogger.Interface.
+// Warn 实现 gormlogger.Interface。
 func (l *GormLogger) Warn(ctx context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Warn {
 		l.logFor(ctx).WarnContext(ctx, expand(msg, args...))
 	}
 }
 
-// Error implements gormlogger.Interface.
+// Error 实现 gormlogger.Interface。
 func (l *GormLogger) Error(ctx context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Error {
 		l.logFor(ctx).ErrorContext(ctx, expand(msg, args...))
 	}
 }
 
-// Trace implements gormlogger.Interface. Record-not-found is normal control
-// flow and never logged as an error; slow statements are logged as warnings.
+// Trace 实现 gormlogger.Interface。记录未找到属于正常控制流，绝不记为错误；
+// 慢语句记为警告。
 func (l *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	if l.level <= gormlogger.Silent {
 		return
@@ -111,8 +109,8 @@ func (l *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 	}
 }
 
-// expand renders GORM's printf-style message. Several GORM call sites pass
-// format strings with arguments, so dropping the arguments would log a bare %v.
+// expand 渲染 GORM 的 printf 风格消息。若干 GORM 调用点会传入带参数的格式串，
+// 丢掉参数就会把裸 %v 写进日志。
 func expand(msg string, args ...any) string {
 	if len(args) == 0 {
 		return msg

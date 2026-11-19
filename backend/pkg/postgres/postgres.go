@@ -1,8 +1,7 @@
-// Package postgres opens the PostgreSQL connection used by the application.
+// Package postgres 打开应用使用的 PostgreSQL 连接。
 //
-// The package owns connection lifetime, pool tuning and GORM's naming strategy;
-// callers only see a *gorm.DB. Configuration arrives as Options instead of being
-// read from the application's config package, so the package stays reusable.
+// 本包负责连接生命周期、连接池调优以及 GORM 的命名策略；调用方只看到 *gorm.DB。
+// 配置以 Options 传入，而不是从应用的 config 包读取，因此本包保持可复用。
 package postgres
 
 import (
@@ -19,28 +18,27 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/pkg/logger"
 )
 
-// Options describes a PostgreSQL connection.
+// Options 描述一个 PostgreSQL 连接。
 type Options struct {
-	// DSN is the connection string handed to pgx.
+	// DSN 是交给 pgx 的连接串。
 	DSN string
-	// TablePrefix is applied to every model by GORM's naming strategy.
+	// TablePrefix 由 GORM 的命名策略应用到每个模型。
 	TablePrefix string
-	// MaxOpenConns / MaxIdleConns bound the pool.
+	// MaxOpenConns / MaxIdleConns 限制连接池。
 	MaxOpenConns int
 	MaxIdleConns int
-	// ConnMaxLifetime / ConnMaxIdleTime recycle pooled connections.
+	// ConnMaxLifetime / ConnMaxIdleTime 回收连接池中的连接。
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
-	// LogLevel is one of silent, error, warn, info (GORM statement logging).
+	// LogLevel 取 silent、error、warn、info 之一（GORM 语句日志）。
 	LogLevel string
-	// SlowQueryThreshold flags statements slower than this as warnings.
+	// SlowQueryThreshold 把慢于该阈值的语句标为警告。
 	SlowQueryThreshold time.Duration
-	// Logger receives GORM's statement logs; nil falls back to slog.Default.
+	// Logger 接收 GORM 的语句日志；为 nil 时回落到 slog.Default。
 	Logger *slog.Logger
 }
 
-// Open connects to PostgreSQL through GORM, applying pool limits, the table
-// prefix and the slog-backed statement logger.
+// Open 通过 GORM 连接 PostgreSQL，并应用连接池限制、表前缀以及基于 slog 的语句日志器。
 func Open(ctx context.Context, opts Options) (*gorm.DB, error) {
 	log := opts.Logger
 	if log == nil {
@@ -78,7 +76,7 @@ func Open(ctx context.Context, opts Options) (*gorm.DB, error) {
 	return gormDB, nil
 }
 
-// Close releases the connection pool.
+// Close 释放连接池。
 func Close(gormDB *gorm.DB) error {
 	if gormDB == nil {
 		return nil
@@ -90,7 +88,7 @@ func Close(gormDB *gorm.DB) error {
 	return sqlDB.Close()
 }
 
-// SQLDB exposes the underlying *sql.DB (used by health checks).
+// SQLDB 暴露底层 *sql.DB（供健康检查使用）。
 func SQLDB(gormDB *gorm.DB) (*sql.DB, error) {
 	if gormDB == nil {
 		return nil, fmt.Errorf("database handle is nil")
