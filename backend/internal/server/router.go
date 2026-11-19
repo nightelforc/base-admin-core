@@ -42,7 +42,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	router.Use(
 		middleware.RequestIDMiddleware(),
 		middleware.AccessLog(deps.Log),
-		middleware.Recovery(deps.Log),
+		middleware.Recovery(),
 		middleware.CORS(deps.Config.CORS),
 		middleware.BodyLimit(deps.Config.HTTP.MaxBodyBytes),
 	)

@@ -123,7 +123,9 @@ func parseLevel(level string) (slog.Level, error) {
 	}
 }
 
-// IntoContext stores a request-scoped logger in the context.
+// IntoContext stores a request-scoped logger in the context. Layers that want
+// request attributes on their records (GORM, for one) resolve it with From
+// instead of capturing a logger at construction time.
 func IntoContext(ctx context.Context, log *slog.Logger) context.Context {
 	return context.WithValue(ctx, contextKey{}, log)
 }
@@ -131,8 +133,19 @@ func IntoContext(ctx context.Context, log *slog.Logger) context.Context {
 // From returns the request-scoped logger, or the default logger when the
 // context carries none.
 func From(ctx context.Context) *slog.Logger {
-	if log, ok := ctx.Value(contextKey{}).(*slog.Logger); ok && log != nil {
+	if log, ok := fromContext(ctx); ok {
 		return log
 	}
 	return slog.Default()
+}
+
+// fromContext reports whether ctx carries a request-scoped logger. Callers that
+// already hold a process logger use the second result to decide between it and
+// the scoped logger instead of paying for a With on every record.
+func fromContext(ctx context.Context) (*slog.Logger, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	log, ok := ctx.Value(contextKey{}).(*slog.Logger)
+	return log, ok && log != nil
 }

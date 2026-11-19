@@ -6,11 +6,21 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/nightelforc/base-admin-core/backend/pkg/logger"
 )
 
-// AccessLog writes one structured line per request and skips the noisy probes.
+// AccessLog installs the request-scoped logger and writes one structured line
+// per request, skipping the noisy probes.
+//
+// The scoped logger carries request_id and is stored in the request context, so
+// every layer below (handlers, services, GORM) resolves the same logger through
+// logger.From and its records can be correlated with this access line.
 func AccessLog(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		scoped := log.With("request_id", RequestID(c))
+		c.Request = c.Request.WithContext(logger.IntoContext(c.Request.Context(), scoped))
+
 		path := c.Request.URL.Path
 		if path == "/healthz" || path == "/readyz" {
 			c.Next()
@@ -28,7 +38,6 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 			"bytes", c.Writer.Size(),
 			"latency", time.Since(started).String(),
 			"ip", c.ClientIP(),
-			"request_id", RequestID(c),
 		}
 		if principal, ok := CurrentPrincipal(c); ok {
 			attrs = append(attrs, "user_id", principal.UserID, "username", principal.Username)
@@ -39,11 +48,11 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 
 		switch status := c.Writer.Status(); {
 		case status >= http.StatusInternalServerError:
-			log.Error("http request", attrs...)
+			scoped.Error("http request", attrs...)
 		case status >= http.StatusBadRequest:
-			log.Warn("http request", attrs...)
+			scoped.Warn("http request", attrs...)
 		default:
-			log.Info("http request", attrs...)
+			scoped.Info("http request", attrs...)
 		}
 	}
 }

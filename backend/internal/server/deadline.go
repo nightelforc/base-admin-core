@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/nightelforc/base-admin-core/backend/internal/middleware"
 )
 
 // newDeadlineHandler 给每个请求注入一个带截止时间的 context，除此之外不做任何
@@ -38,11 +40,17 @@ func newDeadlineHandler(next http.Handler, timeout time.Duration, log *slog.Logg
 		// 处理器已经返回，此时 ctx.Err() 仍为 DeadlineExceeded 说明它跑过了
 		// 预算，记一条日志便于定位慢接口；响应内容如何由处理器决定。
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			log.Warn("request exceeded deadline",
+			attrs := []any{
 				"method", r.Method,
 				"path", r.URL.Path,
 				"timeout", timeout,
-			)
+			}
+			// RequestIDMiddleware writes the id on the response, so this warning
+			// can carry the same correlation id as the access line.
+			if id := w.Header().Get(middleware.RequestIDHeader); id != "" {
+				attrs = append(attrs, "request_id", id)
+			}
+			log.Warn("request exceeded deadline", attrs...)
 		}
 	})
 }

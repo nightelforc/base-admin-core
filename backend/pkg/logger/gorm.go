@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 
 // GormLogger adapts GORM's logging interface to slog so database diagnostics
 // share the application log pipeline (and its level/format configuration).
+//
+// Records are written through the request-scoped logger when the context
+// carries one, so SQL statements inherit request_id (and any other attribute)
+// from the HTTP request that triggered them.
 type GormLogger struct {
 	log           *slog.Logger
 	level         gormlogger.LogLevel
@@ -23,6 +28,9 @@ var _ gormlogger.Interface = (*GormLogger)(nil)
 // NewGormLogger builds a GORM logger writing through log.
 // The level is one of silent, error, warn or info.
 func NewGormLogger(log *slog.Logger, level string, slowThreshold time.Duration) *GormLogger {
+	if log == nil {
+		log = slog.Default()
+	}
 	var lvl gormlogger.LogLevel
 	switch level {
 	case "silent":
@@ -47,24 +55,34 @@ func (l *GormLogger) LogMode(level gormlogger.LogLevel) gormlogger.Interface {
 	return &clone
 }
 
+// logFor returns the logger for one record: the request-scoped logger when ctx
+// carries one, otherwise the process logger. The component attribute keeps
+// database records distinguishable from the request's own lines.
+func (l *GormLogger) logFor(ctx context.Context) *slog.Logger {
+	if scoped, ok := fromContext(ctx); ok {
+		return scoped.With("component", "gorm")
+	}
+	return l.log
+}
+
 // Info implements gormlogger.Interface.
 func (l *GormLogger) Info(ctx context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Info {
-		l.log.InfoContext(ctx, expand(msg, args...))
+		l.logFor(ctx).InfoContext(ctx, expand(msg, args...))
 	}
 }
 
 // Warn implements gormlogger.Interface.
 func (l *GormLogger) Warn(ctx context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Warn {
-		l.log.WarnContext(ctx, expand(msg, args...))
+		l.logFor(ctx).WarnContext(ctx, expand(msg, args...))
 	}
 }
 
 // Error implements gormlogger.Interface.
 func (l *GormLogger) Error(ctx context.Context, msg string, args ...any) {
 	if l.level >= gormlogger.Error {
-		l.log.ErrorContext(ctx, expand(msg, args...))
+		l.logFor(ctx).ErrorContext(ctx, expand(msg, args...))
 	}
 }
 
@@ -80,21 +98,24 @@ func (l *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 	switch {
 	case err != nil && l.level >= gormlogger.Error && !errors.Is(err, gorm.ErrRecordNotFound):
 		sql, rows := fc()
-		l.log.ErrorContext(ctx, "database statement failed",
+		l.logFor(ctx).ErrorContext(ctx, "database statement failed",
 			"elapsed", elapsed.String(), "rows", rows, "sql", sql, "error", err.Error())
 	case elapsed > l.slowThreshold && l.level >= gormlogger.Warn:
 		sql, rows := fc()
-		l.log.WarnContext(ctx, "slow database statement",
+		l.logFor(ctx).WarnContext(ctx, "slow database statement",
 			"elapsed", elapsed.String(), "threshold", l.slowThreshold.String(), "rows", rows, "sql", sql)
 	case l.level >= gormlogger.Info:
 		sql, rows := fc()
-		l.log.DebugContext(ctx, "database statement",
+		l.logFor(ctx).DebugContext(ctx, "database statement",
 			"elapsed", elapsed.String(), "rows", rows, "sql", sql)
 	}
 }
 
+// expand renders GORM's printf-style message. Several GORM call sites pass
+// format strings with arguments, so dropping the arguments would log a bare %v.
 func expand(msg string, args ...any) string {
-	// gormlogger callers already formatted their arguments with fmt.Sprintf.
-	_ = args
-	return msg
+	if len(args) == 0 {
+		return msg
+	}
+	return fmt.Sprintf(msg, args...)
 }

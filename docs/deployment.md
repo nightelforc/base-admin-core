@@ -167,7 +167,7 @@ pg_dump --format=custom --file=base_admin_$(date +%F).dump "$DATABASE_URL"
 ## 7. 可观测性
 
 - 访问日志：每条请求一行，含 `request_id / method / path / status / latency / ip`，`X-Request-ID` 会回写到响应头，便于串联。
-- 应用日志：`slog`，生产用 `LOG_FORMAT=json`；5xx 才带 `error` 字段与堆栈。
+- 应用日志：`slog`，生产用 `LOG_FORMAT=json`；5xx 才带 `error` 字段与堆栈。请求级日志统一带 `request_id`，GORM 的慢查询与失败语句同样继承它并附 `component=gorm`，可直接按请求串联 SQL。
 - 审计日志：写操作入库（`<prefix>operation_logs`），在"系统管理 → 操作日志"中查询。
 - 健康检查：`/healthz`（进程存活）、`/readyz`（依赖可用），可直接接入 K8s 探针或负载均衡健康检查。
 

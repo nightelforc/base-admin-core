@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -117,5 +118,23 @@ func TestStreamingResponseIsNotBuffered(t *testing.T) {
 	}
 	if !rec.Flushed {
 		t.Fatal("response was not flushed, want streaming writes to reach the client")
+	}
+}
+
+// 超时告警要能和访问日志用同一个 request_id 串联。
+func TestDeadlineLogsRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	handler := newDeadlineHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", "req-123")
+		<-r.Context().Done()
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}), 20*time.Millisecond, logger)
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/users", nil))
+
+	if !strings.Contains(buf.String(), "request_id=req-123") {
+		t.Fatalf("log = %q, want it to carry the request id", buf.String())
 	}
 }
