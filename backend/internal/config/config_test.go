@@ -4,18 +4,58 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
+
+	// 以仓库里的全量配置为基线，再合并测试片段。这样测试覆盖的是真实默认值，
+	// 而不是代码里已经删除的 envDefault。
+	baseData, err := os.ReadFile(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read base config: %v", err)
+	}
+	root := map[string]any{}
+	if err := yaml.Unmarshal(baseData, &root); err != nil {
+		t.Fatalf("parse base config: %v", err)
+	}
+	overlay := map[string]any{}
+	if err := yaml.Unmarshal([]byte(content), &overlay); err != nil {
+		t.Fatalf("parse test config: %v", err)
+	}
+	mergeConfig(root, overlay)
+	merged, err := yaml.Marshal(root)
+	if err != nil {
+		t.Fatalf("marshal test config: %v", err)
+	}
+
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, merged, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func mergeConfig(dst, src map[string]any) {
+	for key, value := range src {
+		srcMap, ok := value.(map[string]any)
+		if !ok {
+			dst[key] = value
+			continue
+		}
+		dstMap, ok := dst[key].(map[string]any)
+		if !ok {
+			dst[key] = srcMap
+			continue
+		}
+		mergeConfig(dstMap, srcMap)
+	}
 }
 
 func TestLoadLayering(t *testing.T) {
@@ -41,14 +81,14 @@ http:
 		t.Fatalf("HTTP_REQUEST_TIMEOUT = %s, want 12s", cfg.HTTP.RequestTimeout)
 	}
 	if cfg.HTTP.ReadTimeout != 30*time.Second {
-		t.Fatalf("HTTP_READ_TIMEOUT = %s, want default 30s", cfg.HTTP.ReadTimeout)
+		t.Fatalf("HTTP_READ_TIMEOUT = %s, want config default 30s", cfg.HTTP.ReadTimeout)
 	}
 	if cfg.Source() != path {
 		t.Fatalf("Source() = %q, want %q", cfg.Source(), path)
 	}
 }
 
-func TestLoadEnvironmentZeroWinsOverDefault(t *testing.T) {
+func TestLoadEnvironmentZeroOverridesConfig(t *testing.T) {
 	path := writeConfig(t, `
 http:
   request_timeout: 12s
@@ -230,6 +270,67 @@ func TestRepositoryConfigFile(t *testing.T) {
 	if cfg.Security.OperationLogBodyLimit != 2048 {
 		t.Fatalf("operation_log_body_limit = %d, want 2048", cfg.Security.OperationLogBodyLimit)
 	}
+}
+
+// TestRepositoryConfigDeclaresEveryField 防止删掉 config.yaml 中的键后，字段悄悄
+// 退化成零值。代码没有 envDefault，模板缺键只会在某些校验上才暴露。
+func TestRepositoryConfigDeclaresEveryField(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	root := map[string]any{}
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("parse config.yaml: %v", err)
+	}
+	checkYAMLFields(t, reflect.TypeOf(Config{}), root, "Config")
+}
+
+func checkYAMLFields(t *testing.T, typ reflect.Type, node map[string]any, path string) {
+	t.Helper()
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		tag := field.Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		value, ok := node[name]
+		if !ok {
+			t.Errorf("%s.%s is missing yaml key %q", path, field.Name, name)
+			continue
+		}
+		if field.Type.Kind() != reflect.Struct {
+			continue
+		}
+		child, ok := value.(map[string]any)
+		if !ok {
+			t.Errorf("%s.%s yaml key %q is not a mapping", path, field.Name, name)
+			continue
+		}
+		checkYAMLFields(t, field.Type, child, path+"."+field.Name)
+	}
+}
+
+// TestStructTagsHaveNoEnvDefault 保证默认值只有 config.yaml 一个来源。
+func TestStructTagsHaveNoEnvDefault(t *testing.T) {
+	var walk func(reflect.Type)
+	walk = func(typ reflect.Type) {
+		if typ.Kind() != reflect.Struct {
+			return
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if tag := field.Tag.Get("envDefault"); tag != "" {
+				t.Errorf("%s.%s still has envDefault %q", typ.Name(), field.Name, tag)
+			}
+			walk(field.Type)
+		}
+	}
+	walk(reflect.TypeOf(Config{}))
 }
 
 func TestLoadRequiresConfigFile(t *testing.T) {

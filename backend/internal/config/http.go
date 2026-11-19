@@ -4,20 +4,20 @@ import "time"
 
 // HTTP 保存 HTTP 服务的调优参数。
 type HTTP struct {
-	Addr              string        `env:"ADDR" envDefault:":8080" yaml:"addr"`
-	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" envDefault:"10s" yaml:"read_header_timeout"`
-	ReadTimeout       time.Duration `env:"READ_TIMEOUT" envDefault:"30s" yaml:"read_timeout"`
+	Addr              string        `env:"ADDR" yaml:"addr"`
+	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" yaml:"read_header_timeout"`
+	ReadTimeout       time.Duration `env:"READ_TIMEOUT" yaml:"read_timeout"`
 	// WriteTimeout 是连接级写截止时间，从读完请求头开始计算。它对 SSE / WebSocket
 	// 是致命的（到点直接掐断连接），所以默认关闭；不提供长连接时建议改成 60s，
 	// 让慢客户端无法长期占用 goroutine。
-	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"0s" yaml:"write_timeout"`
+	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" yaml:"write_timeout"`
 	// RequestTimeout 是注入到请求 context 的截止时间（预算），不是强制断点：超时
 	// 后 context 被取消，数据库、Redis 与出站调用随之中断，由处理器返回 504；
 	// 响应不会被缓冲，也不会被本层改写。0 表示不注入。
-	RequestTimeout  time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s" yaml:"request_timeout"`
-	IdleTimeout     time.Duration `env:"IDLE_TIMEOUT" envDefault:"120s" yaml:"idle_timeout"`
-	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"20s" yaml:"shutdown_timeout"`
-	MaxBodyBytes    int64         `env:"MAX_BODY_BYTES" envDefault:"4194304" yaml:"max_body_bytes"`
+	RequestTimeout  time.Duration `env:"REQUEST_TIMEOUT" yaml:"request_timeout"`
+	IdleTimeout     time.Duration `env:"IDLE_TIMEOUT" yaml:"idle_timeout"`
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" yaml:"shutdown_timeout"`
+	MaxBodyBytes    int64         `env:"MAX_BODY_BYTES" yaml:"max_body_bytes"`
 	TrustedProxies  []string      `env:"TRUSTED_PROXIES" envSeparator:"," yaml:"trusted_proxies"`
 }
 

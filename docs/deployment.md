@@ -108,8 +108,8 @@ server {
 ## 4. 配置与覆盖
 
 全量配置及默认值见 [`backend/config.yaml`](../backend/config.yaml)，按 L1 基础运行 / L2 基础设施 /
-L3 安全敏感分级；每项都标注了对应层级。加载顺序为“内置默认值 < config.yaml < 环境变量”，
-环境变量只写需要覆盖的项，示例见 [`backend/.env.example`](../backend/.env.example)。
+L3 安全敏感分级；每项都标注了对应层级。加载顺序为“config.yaml < 环境变量”，
+config.yaml 同时是全量配置和默认值的唯一来源，环境变量只写需要覆盖的项，示例见 [`backend/.env.example`](../backend/.env.example)。
 
 Kubernetes 清单见 [`backend/deploy/k8s/configmap.yaml`](../backend/deploy/k8s/configmap.yaml) 和
 [`backend/deploy/k8s/secret.yaml`](../backend/deploy/k8s/secret.yaml)：ConfigMap 只列需要覆盖的项，未列出的键

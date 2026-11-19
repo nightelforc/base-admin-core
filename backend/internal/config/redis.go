@@ -14,11 +14,11 @@ import (
 // 客户端内部完成，调用方无需感知。
 // 集群模式未实现：它需要 hash tag 与跨槽事务层面的改造，属于独立的一步。
 type Redis struct {
-	Mode string `env:"MODE" envDefault:"standalone" validate:"required,oneof=standalone sentinel" yaml:"mode"`
+	Mode string `env:"MODE" validate:"required,oneof=standalone sentinel" yaml:"mode"`
 
 	// Addrs 是连接目标地址列表：单机模式下恰好一个（数据节点本身），哨兵模式下
 	// 是哨兵节点列表。默认值只适合单机，切到哨兵时要整体替换成哨兵地址。
-	Addrs []string `env:"ADDRS" envSeparator:"," envDefault:"127.0.0.1:6379" yaml:"addrs"`
+	Addrs []string `env:"ADDRS" envSeparator:"," yaml:"addrs"`
 
 	// 以下三项只在哨兵模式下使用。
 	MasterName       string `env:"MASTER_NAME" yaml:"master_name"`
@@ -27,25 +27,25 @@ type Redis struct {
 
 	Username     string        `env:"USERNAME" yaml:"username"`
 	Password     string        `env:"PASSWORD" yaml:"password"`
-	DB           int           `env:"DB" envDefault:"0" validate:"min=0" yaml:"db"`
-	KeyPrefix    string        `env:"KEY_PREFIX" envDefault:"base-admin:" yaml:"key_prefix"`
-	DialTimeout  time.Duration `env:"DIAL_TIMEOUT" envDefault:"5s" yaml:"dial_timeout"`
-	ReadTimeout  time.Duration `env:"READ_TIMEOUT" envDefault:"3s" yaml:"read_timeout"`
-	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" envDefault:"3s" yaml:"write_timeout"`
-	PoolSize     int           `env:"POOL_SIZE" envDefault:"20" validate:"min=1" yaml:"pool_size"`
+	DB           int           `env:"DB" validate:"min=0" yaml:"db"`
+	KeyPrefix    string        `env:"KEY_PREFIX" yaml:"key_prefix"`
+	DialTimeout  time.Duration `env:"DIAL_TIMEOUT" yaml:"dial_timeout"`
+	ReadTimeout  time.Duration `env:"READ_TIMEOUT" yaml:"read_timeout"`
+	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" yaml:"write_timeout"`
+	PoolSize     int           `env:"POOL_SIZE" validate:"min=1" yaml:"pool_size"`
 
 	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
-	RouteByLatency bool `env:"ROUTE_BY_LATENCY" envDefault:"false" yaml:"route_by_latency"`
-	RouteRandomly  bool `env:"ROUTE_RANDOMLY" envDefault:"false" yaml:"route_randomly"`
+	RouteByLatency bool `env:"ROUTE_BY_LATENCY" yaml:"route_by_latency"`
+	RouteRandomly  bool `env:"ROUTE_RANDOMLY" yaml:"route_randomly"`
 
 	// 传输层加密。TLSEnabled 为 false 时其余 TLS 字段一律忽略（并在校验里报错，
 	// 避免"证书配了却没生效"）；开启后数据节点与哨兵节点共用同一份证书材料。
-	TLSEnabled            bool   `env:"TLS_ENABLED" envDefault:"false" yaml:"tls_enabled"`
+	TLSEnabled            bool   `env:"TLS_ENABLED" yaml:"tls_enabled"`
 	TLSCAFile             string `env:"TLS_CA_FILE" yaml:"tls_ca_file"`
 	TLSCertFile           string `env:"TLS_CERT_FILE" yaml:"tls_cert_file"`
 	TLSKeyFile            string `env:"TLS_KEY_FILE" yaml:"tls_key_file"`
 	TLSServerName         string `env:"TLS_SERVER_NAME" yaml:"tls_server_name"`
-	TLSInsecureSkipVerify bool   `env:"TLS_INSECURE_SKIP_VERIFY" envDefault:"false" yaml:"tls_insecure_skip_verify"`
+	TLSInsecureSkipVerify bool   `env:"TLS_INSECURE_SKIP_VERIFY" yaml:"tls_insecure_skip_verify"`
 }
 
 // validate 校验 Key 命名空间、地址列表与部署模式是否匹配，以及连接超时。

@@ -32,7 +32,7 @@ base-admin-core/
 │   │   └── migrate/             只执行数据库迁移
 │   ├── internal/                 应用私有代码（Go 编译期禁止外部 import）
 │   │   ├── bootstrap/           启动时初始化超级管理员
-│   │   ├── config/              默认值 + config.yaml + 环境变量装配与校验
+│   │   ├── config/              config.yaml 加载、环境变量覆盖与启动校验
 │   │   ├── handler/             HTTP 处理器（参数绑定 + 调用 service）
 │   │   ├── middleware/          请求 ID / 访问日志 / 恢复 / CORS / 认证 / 鉴权 / 操作日志
 │   │   ├── model/               GORM 模型与常量
@@ -118,12 +118,12 @@ make check                # 前后端一起检查
 
 ## 配置
 
-配置按“内置默认值 < `backend/config.yaml` < 环境变量”加载。全量配置与分级注释见
+配置按“`backend/config.yaml` < 环境变量”加载：`config.yaml` 是全量配置，也是默认值的唯一来源；环境变量只覆盖需要按环境改的项。全量配置与分级注释见
 [`backend/config.yaml`](backend/config.yaml)，需要覆盖的示例见
 [`backend/.env.example`](backend/.env.example) 与 [docs/deployment.md](docs/deployment.md)。
 `CONFIG_FILE` 可指定配置文件路径；未设置时依次查找 `./config.yaml`、`./backend/config.yaml`。
 
-关键项：
+关键项（默认值均来自 `backend/config.yaml`，环境变量只覆盖显式设置的项）：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |

@@ -15,31 +15,31 @@ var tablePrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$|^$`)
 
 // Database 保存 PostgreSQL 连接设置。
 type Database struct {
-	Host     string `env:"HOST" envDefault:"127.0.0.1" validate:"required" yaml:"host"`
-	Port     int    `env:"PORT" envDefault:"5432" validate:"required,min=1,max=65535" yaml:"port"`
-	User     string `env:"USER" envDefault:"postgres" validate:"required" yaml:"user"`
+	Host     string `env:"HOST" validate:"required" yaml:"host"`
+	Port     int    `env:"PORT" validate:"required,min=1,max=65535" yaml:"port"`
+	User     string `env:"USER" validate:"required" yaml:"user"`
 	Password string `env:"PASSWORD" yaml:"password"`
-	Name     string `env:"NAME" envDefault:"postgres" validate:"required" yaml:"name"`
-	SSLMode  string `env:"SSLMODE" envDefault:"disable" validate:"required,oneof=disable allow prefer require verify-ca verify-full" yaml:"sslmode"`
-	TimeZone string `env:"TIMEZONE" envDefault:"Asia/Shanghai" yaml:"timezone"`
+	Name     string `env:"NAME" validate:"required" yaml:"name"`
+	SSLMode  string `env:"SSLMODE" validate:"required,oneof=disable allow prefer require verify-ca verify-full" yaml:"sslmode"`
+	TimeZone string `env:"TIMEZONE" yaml:"timezone"`
 
 	// TablePrefix 会加到应用创建和查询的每张表名前，使多个部署可以共用一个 schema。
-	TablePrefix string `env:"TABLE_PREFIX" envDefault:"base_" yaml:"table_prefix"`
+	TablePrefix string `env:"TABLE_PREFIX" yaml:"table_prefix"`
 
-	MaxOpenConns       int           `env:"MAX_OPEN_CONNS" envDefault:"25" validate:"min=1" yaml:"max_open_conns"`
-	MaxIdleConns       int           `env:"MAX_IDLE_CONNS" envDefault:"10" validate:"min=0" yaml:"max_idle_conns"`
-	ConnMaxLifetime    time.Duration `env:"CONN_MAX_LIFETIME" envDefault:"30m" yaml:"conn_max_lifetime"`
-	ConnMaxIdleTime    time.Duration `env:"CONN_MAX_IDLE_TIME" envDefault:"5m" yaml:"conn_max_idle_time"`
-	SlowQueryThreshold time.Duration `env:"SLOW_QUERY_THRESHOLD" envDefault:"200ms" yaml:"slow_query_threshold"`
-	LogLevel           string        `env:"LOG_LEVEL" envDefault:"warn" validate:"required,oneof=silent error warn info" yaml:"log_level"`
+	MaxOpenConns       int           `env:"MAX_OPEN_CONNS" validate:"min=1" yaml:"max_open_conns"`
+	MaxIdleConns       int           `env:"MAX_IDLE_CONNS" validate:"min=0" yaml:"max_idle_conns"`
+	ConnMaxLifetime    time.Duration `env:"CONN_MAX_LIFETIME" yaml:"conn_max_lifetime"`
+	ConnMaxIdleTime    time.Duration `env:"CONN_MAX_IDLE_TIME" yaml:"conn_max_idle_time"`
+	SlowQueryThreshold time.Duration `env:"SLOW_QUERY_THRESHOLD" yaml:"slow_query_threshold"`
+	LogLevel           string        `env:"LOG_LEVEL" validate:"required,oneof=silent error warn info" yaml:"log_level"`
 
 	// StatementTimeout 让 PostgreSQL 自己给单条语句设上限。请求超时只能让调用方
 	// 提前放弃，服务端语句仍会继续跑；这个参数才是数据库侧的止损点。0 表示不设置。
 	// 该值不含迁移：迁移走 DSN()，因为大表的 DDL 合法地超过应用查询的时限。
-	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT" envDefault:"5s" yaml:"statement_timeout"`
+	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT" yaml:"statement_timeout"`
 
 	// Migrate 控制启动时是否执行内嵌的 SQL 迁移。
-	Migrate bool `env:"MIGRATE" envDefault:"true" yaml:"migrate"`
+	Migrate bool `env:"MIGRATE" yaml:"migrate"`
 }
 
 // validate 校验表前缀、连接时区与连接池容量之间的约束。

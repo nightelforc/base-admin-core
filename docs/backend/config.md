@@ -10,8 +10,8 @@
 
 后端配置遵循五条约束：
 
-1. **单一声明处**：`backend/config.yaml` 声明全部配置项，代码里的 `envDefault` 只提供兜底默认值。
-2. **三层覆盖**：内置默认值 < `config.yaml` < 环境变量。环境变量只用于覆盖，不要求写全量。
+1. **单一声明处**：`backend/config.yaml` 声明全部配置项，并且是默认值的唯一来源；代码里不保留 `envDefault`。
+2. **两层覆盖**：`config.yaml` < 环境变量。环境变量只用于覆盖，不要求写全量；但 `config.yaml` 本身必须写全。
 3. **启动期失败**：配置文件缺失、YAML 拼错、字段校验失败、生产环境使用占位密钥，都会让进程直接退出，不带病启动。
 4. **显式注入**：`config.Load()` 只在 `cmd/server`、`cmd/migrate` 的启动路径中调用（测试除外）；数据库、Redis、JWT、路由等组件接收 `cfg` 或 `Options`，不自己读环境变量。
 5. **敏感项不入库**：JWT 密钥、数据库/Redis 口令、初始管理员密码在 `config.yaml` 中只留空占位，由环境变量或 Secret 注入。
@@ -47,60 +47,50 @@ log.Info("starting",
 
 `Summary()` 不包含任何密码或密钥，只输出配置文件路径、应用标识、监听地址、数据库地址/用户、Redis 地址、JWT issuer/TTL 等排障所需字段。
 
-### 2.2 `Load()` 的六个步骤
+### 2.2 `Load()` 的五个步骤
 
 入口在 [`backend/internal/config/config.go`](../../backend/internal/config/config.go)：
 
 | 步骤 | 行为 | 失败表现 |
 | --- | --- | --- |
-| 1 | 用**空环境**执行一次 `env.Parse`，只套用结构体上的 `envDefault` | 默认值 tag 类型错误时返回 `load config defaults` |
-| 2 | `resolveConfigFile()` 确定配置文件路径 | 找不到文件、路径是目录、`CONFIG_FILE` 指向不存在的文件 |
-| 3 | 用 `yaml.Decoder` 把文件解码到已填好默认值的 `cfg` | 读取失败、空文件、YAML 语法错误、未知字段 |
-| 4 | 用**真实环境**再执行一次 `env.Parse`，只应用显式环境变量 | 环境变量类型转换失败，返回 `apply environment overrides` |
-| 5 | 记录实际加载的路径到 `cfg.source` | 不会失败 |
-| 6 | 调用 `cfg.Validate()` | 结构体 tag 或跨字段校验不通过 |
+| 1 | `resolveConfigFile()` 确定配置文件路径 | 找不到文件、路径是目录、`CONFIG_FILE` 指向不存在的文件 |
+| 2 | 用 `yaml.Decoder` 把文件解码到空白 `cfg` | 读取失败、空文件、YAML 语法错误、未知字段 |
+| 3 | 用 `env.Parse` 应用显式设置的环境变量 | 环境变量类型转换失败，返回 `apply environment overrides` |
+| 4 | 记录实际加载的路径到 `cfg.source` | 不会失败 |
+| 5 | 调用 `cfg.Validate()` | 结构体 tag 或跨字段校验不通过 |
 
 可以简化为：
 
 ```go
 cfg := &Config{}
 
-// 1. 只套默认值
-env.ParseWithOptions(cfg, env.Options{Environment: map[string]string{}})
-
-// 2. 找文件 + 3. 读 YAML
+// 1. 找文件 + 2. 读 YAML
 path, err := resolveConfigFile()
 loadConfigFile(path, cfg)
 
-// 4. 只应用显式环境变量
-env.ParseWithOptions(cfg, env.Options{
-    DefaultValueTagName: "envDefaultDisabled",
-})
+// 3. 应用显式环境变量
+env.Parse(cfg)
 
-// 5. 记录来源 + 6. 校验
+// 4. 记录来源 + 5. 校验
 cfg.source = path
 cfg.Validate()
 ```
 
-### 2.3 为什么需要两次 `env.Parse`
+### 2.3 为什么先读 YAML、再读环境变量
 
-如果只解析一次环境变量，执行顺序会变成“环境变量 → YAML”，YAML 会把环境变量覆盖掉，与“环境变量优先级最高”的约定相反。
+如果先解析环境变量、再解码 YAML，YAML 会把环境变量覆盖掉，与“环境变量优先级最高”的约定相反。所以顺序固定为：
 
-如果先解析环境变量、再解析 YAML，虽然顺序对了，但 YAML 中没写的字段会被 YAML 的零值覆盖，默认值也会丢失。
-
-所以第一次解析必须看不到真实环境，只让 `envDefault` 生效；第二次才读真实环境，并且把默认值标签指向一个不存在的名字：
-
-```go
-DefaultValueTagName: "envDefaultDisabled"
+```text
+config.yaml  ->  环境变量
 ```
 
-这样第二次解析只处理**显式设置**的环境变量：
+`env.Parse` 只处理**显式设置**的环境变量，未设置的键保留 YAML 中的值：
 
 - 设置了 `HTTP_REQUEST_TIMEOUT=5s`：覆盖 YAML 的 `30s`。
-- 没设置 `HTTP_REQUEST_TIMEOUT`：保留 YAML 的值，不会被 `envDefault:"30s"` 重置。
+- 没设置 `HTTP_REQUEST_TIMEOUT`：保留 YAML 的值。
 - 显式设置 `HTTP_REQUEST_TIMEOUT=0s`：`0` 生效，表示关闭请求超时。
 
-`envDefaultDisabled` 是一个哨兵标签名，项目中没有任何字段使用它。不要给字段真的加上这个标签，否则第二次解析会重新套默认值。
+代码没有 `envDefault`，YAML 里没写的字段会保持 Go 零值。因此 `config.yaml` 必须写全所有配置项；删键、漏键通常会在启动校验阶段失败，而不是悄悄回退到某个默认值。
 
 ## 3. 配置分层与优先级
 
@@ -121,19 +111,21 @@ DefaultValueTagName: "envDefaultDisabled"
 优先级从低到高：
 
 ```text
-代码 envDefault  <  config.yaml  <  进程环境变量
+config.yaml  <  进程环境变量
 ```
+
+`config.yaml` 同时承担“全量声明”和“默认值”两个职责。没有代码内置默认值，所以模板里的键不能删；环境变量只在需要按环境改值时覆盖。
 
 以 `http.request_timeout` 为例：
 
 | 场景 | 最终值 | 原因 |
 | --- | --- | --- |
-| YAML 不写，环境变量不设置 | `30s` | 使用 `envDefault:"30s"` |
-| YAML 写 `12s`，环境变量不设置 | `12s` | YAML 覆盖默认值 |
+| YAML 不写，环境变量不设置 | `0` | 没有代码默认值；该字段可能被校验拒绝，不要依赖缺键 |
+| YAML 写 `30s`，环境变量不设置 | `30s` | 使用 `config.yaml` 的值 |
 | YAML 写 `12s`，环境变量 `HTTP_REQUEST_TIMEOUT=5s` | `5s` | 环境变量覆盖 YAML |
 | YAML 写 `12s`，环境变量 `HTTP_REQUEST_TIMEOUT=0s` | `0s` | 显式 `0` 也是有效覆盖，表示关闭超时 |
 
-注意：**“未设置”和“显式设置为零值”是两件事**。第二次 `env.Parse` 只处理显式设置的环境变量，所以 `0`、空字符串等零值只有在明确写入环境变量时才生效。
+注意：**“未设置”和“显式设置为零值”是两件事**。`env.Parse` 只处理显式设置的环境变量，所以 `0`、空字符串等零值只有在明确写入环境变量时才生效。
 
 ### 3.3 `.env` 的定位
 
@@ -145,8 +137,8 @@ godotenv.Load(".env", "backend/.env")
 
 它有三个特点：
 
-- **不是配置层**：`.env` 只是把键值写进进程环境，真正的覆盖仍由 `config.Load()` 的第二次 `env.Parse` 完成。
-- **不覆盖已有环境变量**：真实环境变量优先级高于 `.env`，适合本地开发时用 `.env` 提供默认值，CI/生产用真实环境变量覆盖。
+- **不是配置层**：`.env` 只是把键值写进进程环境，真正的覆盖仍由 `config.Load()` 中的 `env.Parse` 完成。
+- **不覆盖已有环境变量**：真实环境变量优先级高于 `.env`，适合本地开发时用 `.env` 提供本地值，CI/生产用真实环境变量覆盖。
 - **调用方忽略了加载错误**：`.env` 不存在不会阻止启动；但 `godotenv` 在遇到第一个不存在的文件时会提前返回，所以不要依赖它一定回退到 `backend/.env`。最稳妥的做法是在启动目录放 `.env`，或直接注入真实环境变量。
 
 生产环境完全可以不使用 `.env`。
@@ -191,7 +183,7 @@ decoder.Decode(cfg)
 
 - `nmae:` 这类拼写错误会直接报错，不会被静默忽略。
 - 多写一个不存在的配置项也会报错。
-- 空文件会报 `parse config file "...": file is empty`，不会悄悄只用默认值。
+- 空文件会报 `parse config file "...": file is empty`，不会悄悄使用零值。
 
 `config.yaml` 中的 `time.Duration` 字段可以直接写带单位的字符串：
 
@@ -225,14 +217,14 @@ http:
 
 ### 4.2 字段标签
 
-每个字段声明 `env` 和 `yaml`，多数字段再用 `envDefault` 提供兜底值，必要时加 `validate`。以 HTTP 为例：
+每个字段声明 `env` 和 `yaml`，必要时加 `validate`；默认值只写在 `config.yaml`，结构体上不再使用 `envDefault`。以 HTTP 为例：
 
 ```go
 type HTTP struct {
-    Addr           string        `env:"ADDR" envDefault:":8080" yaml:"addr"`
-    ReadTimeout    time.Duration `env:"READ_TIMEOUT" envDefault:"30s" yaml:"read_timeout"`
-    RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s" yaml:"request_timeout"`
-    MaxBodyBytes   int64         `env:"MAX_BODY_BYTES" envDefault:"4194304" yaml:"max_body_bytes"`
+    Addr           string        `env:"ADDR" yaml:"addr"`
+    ReadTimeout    time.Duration `env:"READ_TIMEOUT" yaml:"read_timeout"`
+    RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" yaml:"request_timeout"`
+    MaxBodyBytes   int64         `env:"MAX_BODY_BYTES" yaml:"max_body_bytes"`
 }
 ```
 
@@ -282,16 +274,16 @@ CORS_ALLOWED_ORIGINS=https://admin.example.com,https://ops.example.com
 1. 在对应组件文件中加字段和标签：
 
    ```go
-   RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s" yaml:"request_timeout"`
+   RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" yaml:"request_timeout"`
    ```
 
-2. 在 `backend/config.yaml` 的对应节点加同名 YAML 键和注释。
+2. 在 `backend/config.yaml` 的对应节点加同名 YAML 键、默认值和注释。这是默认值的唯一来源，不能只加字段不加键。
 3. 如果需要按环境覆盖，在 `backend/.env.example` 增加示例。
 4. 单字段范围用 `validate` tag；跨字段约束写到对应结构体文件里的 `validate()`，根 `Validate()` 只负责按组件顺序调用。
-5. 在 `backend/internal/config/config_test.go` 补测试，至少覆盖“默认值 / YAML 覆盖 / 环境变量覆盖”。
+5. 在 `backend/internal/config/config_test.go` 补测试，至少覆盖“YAML 覆盖 / 环境变量覆盖 / 缺键后的零值校验”。
 6. 如果该配置会被组件消费，在装配层显式传入，不要让组件自己读环境变量。
 
-只加结构体字段、不加 YAML 键也可以运行，但会失去“全量配置在 `config.yaml` 中可发现”的优势；新配置项应同时更新模板。
+`TestRepositoryConfigDeclaresEveryField` 会检查 `config.yaml` 是否覆盖了所有带 `yaml` 标签的字段；新增字段却忘了补模板时，这个测试会失败。
 
 ## 5. 启动期校验
 
@@ -454,6 +446,7 @@ http.Server
 | --- | --- | --- |
 | 启动报 `config file not found` | 当前工作目录下没有 `config.yaml`，也没有设置 `CONFIG_FILE` | 设置 `CONFIG_FILE` 绝对路径，或从仓库根/`backend/` 目录启动 |
 | 启动报 `field xxx not found` | YAML 键拼错，或加了代码中不存在的字段 | 对照 `backend/config.yaml` 修正键名 |
+| 删除 `config.yaml` 某个键后启动报零值/校验失败 | 代码没有内置默认值，缺键就是 Go 零值 | 保留全量键；新增字段也要同步补模板 |
 | 改了 YAML 但值没变 | 环境变量覆盖了 YAML | 检查同名环境变量；启动日志的 `config_file` 可确认加载了哪个文件 |
 | 环境变量不生效 | 变量名拼错，或用了错误的组件前缀 | 查结构体上的 `env` 标签；数据库是 `DB_` 不是 `DATABASE_` |
 | 设置 `0` 后启动失败 | 该字段不允许零值（如读超时），或 `0` 没有通过环境变量显式设置 | 看错误信息；只有明确允许 0 的字段（如 `HTTP_REQUEST_TIMEOUT`、`HTTP_IDLE_TIMEOUT`、`CORS_MAX_AGE`、`SECURITY_OPERATION_LOG_BODY_LIMIT`）才能用 0 |

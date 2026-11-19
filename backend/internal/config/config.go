@@ -1,6 +1,7 @@
-// Package config 按“内置默认值 < config.yaml < 环境变量”三层装配运行时配置。
+// Package config 按“config.yaml < 环境变量”两层装配运行时配置。
 //
-// config.yaml 是全量配置的唯一声明处，按重要性分为三层：
+// config.yaml 是全量配置的唯一声明处，也是默认值的唯一来源；代码不再用
+// envDefault 兜底。配置文件按重要性分为三层：
 //
 //	L1 基础运行  APP_* / LOG_* / HTTP_* / BOOTSTRAP_*
 //	L2 基础设施  DB_* / REDIS_* / CORS_*
@@ -10,11 +11,13 @@
 // 例如 app.name 对应 APP_NAME，http.request_timeout 对应 HTTP_REQUEST_TIMEOUT。
 // 敏感项不要写入 config.yaml，应只通过环境变量或 Secret 提供。
 //
-// Load() 是唯一入口：先套用默认值，再读取配置文件，最后应用环境变量并校验。跨字段
-// 问题会一次性全部列出，配置有误的进程绝不带病启动。
+// Load() 是唯一入口：先读取配置文件，再应用环境变量并校验。配置文件必须写全所有
+// 配置项；缺失的字段会保持 Go 零值，通常会被启动校验拒绝。跨字段问题会一次性全部
+// 列出，配置有误的进程绝不带病启动。
 //
 // 每个组件一个文件，文件名就是它配置的组件（app、http、database、redis……）。
-// 因此新增配置项只需改对应组件的文件；config.go 只保留根配置树、加载顺序与启动期校验。
+// 因此新增配置项需要同时改对应组件的文件与 config.yaml；config.go 只保留根配置树、
+// 加载顺序与启动期校验。
 package config
 
 import (
@@ -58,14 +61,9 @@ type Config struct {
 	source string
 }
 
-// Load 按“默认值 -> config.yaml -> 环境变量”的顺序装配配置并校验。
+// Load 按“config.yaml -> 环境变量”的顺序装配配置并校验。
 func Load() (*Config, error) {
 	cfg := &Config{}
-
-	// 第一次解析只读取 envDefault：传入空环境，避免环境变量提前覆盖配置文件。
-	if err := env.ParseWithOptions(cfg, env.Options{Environment: map[string]string{}}); err != nil {
-		return nil, fmt.Errorf("load config defaults: %w", err)
-	}
 
 	path, err := resolveConfigFile()
 	if err != nil {
@@ -75,9 +73,8 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// 第二次解析只应用显式设置的环境变量。把默认值 tag 指向不存在的名字，
-	// 防止 envDefault 再次覆盖 config.yaml 中的值。
-	if err := env.ParseWithOptions(cfg, env.Options{DefaultValueTagName: "envDefaultDisabled"}); err != nil {
+	// 环境变量只覆盖显式设置的键，未设置的字段保留 config.yaml 中的值。
+	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("apply environment overrides: %w", err)
 	}
 
@@ -111,8 +108,8 @@ func resolveConfigFile() (string, error) {
 	return "", fmt.Errorf("config file not found: set %s or create one of: %s", ConfigFileEnv, strings.Join(candidates, ", "))
 }
 
-// loadConfigFile 把 YAML 反序列化到已经填好默认值的配置树上。KnownFields 让拼错的
-// 键直接报错，而不是被静默忽略后继续用默认值运行。
+// loadConfigFile 把 YAML 反序列化到空白配置树上。KnownFields 让拼错的键直接报错，
+// 而不是被静默忽略后继续用零值运行。
 func loadConfigFile(path string, cfg *Config) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

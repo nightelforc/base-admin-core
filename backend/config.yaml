@@ -1,9 +1,11 @@
 # base-admin-core 后端全量配置
 #
 # 加载顺序（后者覆盖前者）：
-#   1. 代码内置默认值（envDefault）
-#   2. 本文件
-#   3. 环境变量 / ConfigMap / Secret
+#   1. 本文件（默认值的唯一来源）
+#   2. 环境变量 / ConfigMap / Secret
+#
+# 本文件必须保留全量键。代码没有内置默认值，删掉某个键会让对应字段变成
+# Go 零值，通常会被启动校验拒绝；新增字段时也必须同步在这里补默认值。
 #
 # 环境变量名 = 组件前缀 + 字段名，例如 app.name -> APP_NAME，
 # http.request_timeout -> HTTP_REQUEST_TIMEOUT。

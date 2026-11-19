@@ -34,7 +34,7 @@ pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis
 
 ## 2. 配置
 
-配置按“内置默认值 < `config.yaml` < 环境变量”三层装配，环境变量只用于覆盖：
+配置按“`config.yaml` < 环境变量”两层装配，环境变量只用于覆盖：
 
 | 层级 | 内容 | 典型来源 |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis
 | L2 基础设施 | PostgreSQL、Redis、CORS 等按环境变化的地址与容量 | `config.yaml` + ConfigMap |
 | L3 安全敏感 | JWT、密码策略、登录限流、审计，以及数据库/Redis 口令 | Secret / 环境变量 |
 
-`backend/config.yaml` 是全量配置的唯一声明处；`CONFIG_FILE` 可指定路径，未设置时依次查找
+`backend/config.yaml` 是全量配置的唯一声明处，也是默认值的唯一来源；`CONFIG_FILE` 可指定路径，未设置时依次查找
 `./config.yaml`、`./backend/config.yaml`。YAML 使用严格字段校验，拼错的键会直接启动失败。
 
 启动期还会做跨字段校验：
