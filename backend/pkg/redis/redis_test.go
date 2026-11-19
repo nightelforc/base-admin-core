@@ -2,6 +2,17 @@ package redis
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,4 +112,179 @@ func TestNewClientSentinelBuildsClient(t *testing.T) {
 	if err := client.Close(); err != nil {
 		t.Fatalf("关闭客户端失败: %v", err)
 	}
+}
+
+func TestNewClientTLSDisabledByDefault(t *testing.T) {
+	client, err := newClient(Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}})
+	if err != nil {
+		t.Fatalf("newClient(单机) 返回错误: %v", err)
+	}
+	defer client.Close()
+
+	if client.Options().TLSConfig != nil {
+		t.Fatal("未开启 TLS 却带上了 TLSConfig")
+	}
+}
+
+func TestNewClientTLSEnabledBuildsConfig(t *testing.T) {
+	client, err := newClient(Options{
+		Mode:  ModeStandalone,
+		Addrs: []string{"127.0.0.1:6379"},
+		TLS:   TLSOptions{Enabled: true, ServerName: "redis.internal"},
+	})
+	if err != nil {
+		t.Fatalf("newClient(TLS) 返回错误: %v", err)
+	}
+	defer client.Close()
+
+	cfg := client.Options().TLSConfig
+	if cfg == nil {
+		t.Fatal("开启 TLS 后 TLSConfig 为 nil")
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("MinVersion = %x，期望 TLS 1.2（%x）", cfg.MinVersion, tls.VersionTLS12)
+	}
+	if cfg.ServerName != "redis.internal" {
+		t.Fatalf("ServerName = %q，期望 redis.internal", cfg.ServerName)
+	}
+}
+
+func TestNewClientSentinelAppliesSameTLSConfig(t *testing.T) {
+	// go-redis 的 FailoverOptions 只有一个 TLSConfig，哨兵与数据连接共用它。
+	client, err := newClient(Options{
+		Mode:       ModeSentinel,
+		MasterName: "mymaster",
+		Addrs:      []string{"127.0.0.1:26379"},
+		TLS:        TLSOptions{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("newClient(哨兵 + TLS) 返回错误: %v", err)
+	}
+	defer client.Close()
+
+	if client.Options().TLSConfig == nil {
+		t.Fatal("哨兵模式开启 TLS 后 TLSConfig 为 nil")
+	}
+}
+
+func TestNewClientTLSRequiresCertAndKeyTogether(t *testing.T) {
+	_, err := newClient(Options{
+		Mode:  ModeStandalone,
+		Addrs: []string{"127.0.0.1:6379"},
+		TLS:   TLSOptions{Enabled: true, CertFile: "client.pem"},
+	})
+	if err == nil {
+		t.Fatal("只配了客户端证书、没配私钥，却没有报错")
+	}
+}
+
+func TestNewClientTLSRejectsMissingCAFile(t *testing.T) {
+	_, err := newClient(Options{
+		Mode:  ModeStandalone,
+		Addrs: []string{"127.0.0.1:6379"},
+		TLS: TLSOptions{
+			Enabled: true,
+			CAFile:  filepath.Join(t.TempDir(), "missing.pem"),
+		},
+	})
+	if err == nil {
+		t.Fatal("CA 文件不存在，却没有报错")
+	}
+}
+
+func TestNewClientTLSRejectsInvalidCA(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.pem")
+	if err := os.WriteFile(path, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("写入测试 CA 失败: %v", err)
+	}
+
+	_, err := newClient(Options{
+		Mode:  ModeStandalone,
+		Addrs: []string{"127.0.0.1:6379"},
+		TLS:   TLSOptions{Enabled: true, CAFile: path},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no PEM certificates") {
+		t.Fatalf("非法 CA 的错误 = %v，期望包含 no PEM certificates", err)
+	}
+}
+
+func TestNewClientTLSAcceptsSelfSignedCAAndClientCert(t *testing.T) {
+	caFile, certFile, keyFile := writeSelfSignedCert(t)
+
+	client, err := newClient(Options{
+		Mode:  ModeStandalone,
+		Addrs: []string{"127.0.0.1:6379"},
+		TLS: TLSOptions{
+			Enabled:  true,
+			CAFile:   caFile,
+			CertFile: certFile,
+			KeyFile:  keyFile,
+		},
+	})
+	if err != nil {
+		t.Fatalf("newClient(自签 CA + 客户端证书) 返回错误: %v", err)
+	}
+	defer client.Close()
+
+	cfg := client.Options().TLSConfig
+	if cfg == nil {
+		t.Fatal("TLSConfig 为 nil")
+	}
+	if cfg.RootCAs == nil {
+		t.Fatal("配置了 CA 文件，RootCAs 却为 nil")
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Fatalf("Certificates 数量 = %d，期望 1", len(cfg.Certificates))
+	}
+}
+
+// writeSelfSignedCert 在临时目录生成一套自签证书，返回 CA、客户端证书与私钥的
+// 路径。用例只需要"能被 tls 包解析的 PEM"，不涉及握手。
+func writeSelfSignedCert(t *testing.T) (caFile, certFile, keyFile string) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("生成私钥失败: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "redis-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("签发证书失败: %v", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("编码私钥失败: %v", err)
+	}
+
+	dir := t.TempDir()
+	caFile = filepath.Join(dir, "ca.pem")
+	certFile = filepath.Join(dir, "client.pem")
+	keyFile = filepath.Join(dir, "client.key")
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	for _, item := range []struct {
+		path string
+		data []byte
+	}{
+		{caFile, certPEM},
+		{certFile, certPEM},
+		{keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})},
+	} {
+		if err := os.WriteFile(item.path, item.data, 0o600); err != nil {
+			t.Fatalf("写入 %s 失败: %v", item.path, err)
+		}
+	}
+
+	return caFile, certFile, keyFile
 }

@@ -136,6 +136,9 @@ make check                # 前后端一起检查
 | `REDIS_MASTER_NAME` | - | 哨兵模式必填：主节点名 |
 | `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | - | 数据节点凭据与库号 |
 | `REDIS_KEY_PREFIX` | `base-admin:` | Redis key 命名空间，避免与其他系统冲突 |
+| `REDIS_TLS_ENABLED` | `false` | 开启传输加密；托管 Redis 强制 in-transit encryption 时打开 |
+| `REDIS_TLS_CA_FILE` / `REDIS_TLS_SERVER_NAME` | - | 私有 CA 路径、证书校验名；留空分别用系统根证书与连接地址主机名 |
+| `REDIS_TLS_CERT_FILE` / `REDIS_TLS_KEY_FILE` | - | 客户端证书与私钥（mTLS），必须成对出现 |
 | `JWT_SECRET` | - | 必填，至少 32 字符（`openssl rand -base64 48`） |
 | `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL` | `30m` / `168h` | access / refresh 有效期 |
 | `SECURITY_LOGIN_MAX_ATTEMPTS` | `5` | 登录失败次数阈值（窗口内） |

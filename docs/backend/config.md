@@ -387,7 +387,7 @@ invalid configuration:
 | --- | --- | --- |
 | `cmd/server` | `config.Load()`、`cfg.Summary()` | 加载配置并输出脱敏摘要 |
 | `pkg/postgres` | `cfg.Database.Options()` | 连接地址、账号、SSL、连接池、慢查询阈值 |
-| `pkg/redis` | `cfg.Redis.Options()` | 地址、账号、DB、超时、连接池 |
+| `pkg/redis` | `cfg.Redis.Options()` | 地址、账号、DB、超时、连接池、TLS 证书材料 |
 | `cmd/migrate` | `config.Load()` | 迁移命令使用与 server 相同的配置 |
 | `build()` | `cfg.Security`、`cfg.JWT`、`cfg.Bootstrap` | 密码策略、令牌签发、初始管理员 |
 | `server.NewRouter` | `cfg.CORS`、`cfg.HTTP.MaxBodyBytes`、`cfg.HTTP.TrustedProxies` | 跨域、请求体上限、可信代理 |

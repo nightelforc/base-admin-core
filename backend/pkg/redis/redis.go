@@ -15,11 +15,17 @@
 // （ModeSentinel）。两者都返回 *goredis.Client，主从切换发生在客户端内部，
 // 因此调用方不需要区分自己连的是哪一种。集群模式有意不在此实现：它需要
 // hash tag / 跨槽事务层面的改造，属于另一件事。
+//
+// 传输层加密由 TLSOptions 控制：开启后数据节点与哨兵节点使用同一份证书材料
+// （托管 Redis 通常对整个实例统一开启 in-transit encryption）。
 package redis
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -32,6 +38,34 @@ const (
 	// ModeSentinel 通过哨兵集群发现主节点，Addrs 是哨兵节点列表。
 	ModeSentinel = "sentinel"
 )
+
+// TLSOptions 描述到 Redis 的传输层加密。
+//
+// 零值表示明文连接。开启后至少要能信任服务端证书：要么通过 CAFile 指定私有
+// CA（托管服务或自签证书的常见形态），要么让系统根证书兜底。CertFile/KeyFile
+// 只在服务端要求客户端证书（mTLS）时才需要。
+//
+// 字段刻意保持为字符串与布尔，而不是直接收一个 *tls.Config：证书材料在这里
+// 加载，配置层因此仍然只是纯数据，和 Database/Redis 的其他字段一致。
+type TLSOptions struct {
+	// Enabled 为 false 时其余字段一律忽略，连接走明文。
+	Enabled bool
+
+	// CAFile 是 PEM 编码的 CA 证书路径。为空时使用系统根证书。
+	CAFile string
+
+	// CertFile 与 KeyFile 是客户端证书与私钥路径，必须成对出现；都为空表示
+	// 不做 mTLS。
+	CertFile string
+	KeyFile  string
+
+	// ServerName 覆盖证书校验使用的名字，为空时取连接地址的主机名。
+	ServerName string
+
+	// InsecureSkipVerify 关闭服务端证书校验，仅供本地自签环境使用；
+	// 开启后 TLS 只能防窃听，不能防冒充。
+	InsecureSkipVerify bool
+}
 
 // Options 描述一个 Redis 连接。
 //
@@ -75,6 +109,9 @@ type Options struct {
 	// 开启后 go-redis 会把只读命令发往从节点。
 	RouteByLatency bool
 	RouteRandomly  bool
+
+	// TLS 控制传输层加密，零值即明文。
+	TLS TLSOptions
 }
 
 // Open 连接 Redis，并通过 PING 验证连接是否可用。
@@ -102,12 +139,62 @@ func Open(ctx context.Context, opts Options) (*goredis.Client, error) {
 	return client, nil
 }
 
+// config 把 TLSOptions 转换成 *tls.Config，未启用时返回 nil。
+//
+// 证书材料在建立连接前加载，路径写错会直接变成启动错误，而不是等到第一条命令
+// 才失败。MinVersion 固定为 TLS 1.2：托管 Redis 早已不支持更低版本，显式钉住
+// 可以避免协商出旧协议。
+func (t TLSOptions) config() (*tls.Config, error) {
+	if !t.Enabled {
+		return nil, nil
+	}
+
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: t.ServerName,
+		// 仅用于本地自签环境，由配置显式开启。
+		InsecureSkipVerify: t.InsecureSkipVerify, //nolint:gosec
+	}
+
+	if t.CAFile != "" {
+		raw, err := os.ReadFile(t.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("redis tls: read CA file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(raw) {
+			return nil, fmt.Errorf("redis tls: no PEM certificates in %s", t.CAFile)
+		}
+		cfg.RootCAs = pool
+	}
+
+	switch {
+	case t.CertFile == "" && t.KeyFile == "":
+		// 不做 mTLS，只校验证书链。
+	case t.CertFile == "" || t.KeyFile == "":
+		return nil, fmt.Errorf("redis tls: cert file and key file must be set together")
+	default:
+		pair, err := tls.LoadX509KeyPair(t.CertFile, t.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("redis tls: load client certificate: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{pair}
+	}
+
+	return cfg, nil
+}
+
 // newClient 按模式构造客户端，不做任何网络往返，因此可以在测试里直接调用。
 //
 // 两种模式在这里就分叉，而不是用 go-redis 的 NewUniversalClient 靠地址数量与
 // MasterName 猜测：显式分支让配置错误变成一条说明清楚的启动错误，而不是静默选错
 // 连接方式。
 func newClient(opts Options) (*goredis.Client, error) {
+	tlsCfg, err := opts.TLS.config()
+	if err != nil {
+		return nil, err
+	}
+
 	switch opts.Mode {
 	case ModeStandalone:
 		// 单机是"就这一台"，多给了地址说明配置想表达别的拓扑，宁可启动失败
@@ -124,6 +211,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			ReadTimeout:  opts.ReadTimeout,
 			WriteTimeout: opts.WriteTimeout,
 			PoolSize:     opts.PoolSize,
+			TLSConfig:    tlsCfg,
 		}), nil
 
 	case ModeSentinel:
@@ -147,6 +235,9 @@ func newClient(opts Options) (*goredis.Client, error) {
 			PoolSize:         opts.PoolSize,
 			RouteByLatency:   opts.RouteByLatency,
 			RouteRandomly:    opts.RouteRandomly,
+			// go-redis 的 FailoverOptions 只有一个 TLSConfig，哨兵连接与数据连接
+			// 共用它，正好对应"整个实例统一开启传输加密"的部署方式。
+			TLSConfig: tlsCfg,
 		}), nil
 
 	default:

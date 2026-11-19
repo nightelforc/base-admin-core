@@ -246,6 +246,7 @@ func (c *Config) Summary() map[string]any {
 		"redis_master": c.Redis.MasterName,
 		"redis_db":     c.Redis.DB,
 		"redis_prefix": c.Redis.KeyPrefix,
+		"redis_tls":    c.Redis.TLSEnabled,
 		"jwt_issuer":   c.JWT.Issuer,
 		"jwt_access":   c.JWT.AccessTTL.String(),
 		"jwt_refresh":  c.JWT.RefreshTTL.String(),

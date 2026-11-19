@@ -87,6 +87,12 @@ redis:
   pool_size: 20                       # L2
   route_by_latency: false             # L2 仅哨兵模式：只读命令按延迟路由到从节点
   route_randomly: false               # L2 仅哨兵模式：只读命令随机路由到从节点
+  tls_enabled: false                  # L2 开启传输加密；其余 tls_* 仅在开启后生效
+  tls_ca_file: ""                     # L2 私有 CA 证书路径；留空使用系统根证书
+  tls_cert_file: ""                   # L3 客户端证书（mTLS），与 tls_key_file 成对
+  tls_key_file: ""                    # L3 客户端私钥（mTLS），与 tls_cert_file 成对
+  tls_server_name: ""                 # L2 覆盖证书校验名；留空取连接地址的主机名
+  tls_insecure_skip_verify: false     # L3 仅本地自签环境，开启后不再校验服务端证书
 
 cors:
   allowed_origins: ["*"]              # L2 生产环境应改为明确域名

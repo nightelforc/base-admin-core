@@ -339,3 +339,78 @@ redis:
 		t.Fatalf("Load error = %v, want mode validation error", err)
 	}
 }
+
+func TestLoadMapsRedisTLSIntoOptions(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  tls_enabled: true
+  tls_ca_file: /etc/ssl/certs/redis-ca.pem
+  tls_server_name: redis.internal
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	opts := cfg.Redis.Options()
+	if !opts.TLS.Enabled {
+		t.Fatal("Options().TLS.Enabled = false, want true")
+	}
+	if opts.TLS.CAFile != "/etc/ssl/certs/redis-ca.pem" {
+		t.Fatalf("Options().TLS.CAFile = %q", opts.TLS.CAFile)
+	}
+	if opts.TLS.ServerName != "redis.internal" {
+		t.Fatalf("Options().TLS.ServerName = %q", opts.TLS.ServerName)
+	}
+}
+
+func TestLoadRedisTLSFromEnvironment(t *testing.T) {
+	path := writeConfig(t, `
+redis: {}
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+	t.Setenv("REDIS_TLS_ENABLED", "true")
+	t.Setenv("REDIS_TLS_INSECURE_SKIP_VERIFY", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	opts := cfg.Redis.Options().TLS
+	if !opts.Enabled || !opts.InsecureSkipVerify {
+		t.Fatalf("Options().TLS = %+v, want enabled with skip-verify from env", opts)
+	}
+}
+
+func TestLoadRejectsRedisTLSOptionsWithoutEnabled(t *testing.T) {
+	// 证书配了却没开开关，等于静默走明文：这里必须报错而不是忽略。
+	path := writeConfig(t, `
+redis:
+  tls_ca_file: /etc/ssl/certs/redis-ca.pem
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REDIS_TLS_ENABLED") {
+		t.Fatalf("Load error = %v, want TLS-enabled requirement", err)
+	}
+}
+
+func TestLoadRejectsRedisTLSClientCertWithoutKey(t *testing.T) {
+	path := writeConfig(t, `
+redis:
+  tls_enabled: true
+  tls_cert_file: /etc/ssl/certs/redis-client.pem
+`)
+	t.Setenv(ConfigFileEnv, path)
+	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "must be set together") {
+		t.Fatalf("Load error = %v, want cert/key pairing error", err)
+	}
+}

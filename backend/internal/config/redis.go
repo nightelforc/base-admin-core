@@ -37,6 +37,15 @@ type Redis struct {
 	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
 	RouteByLatency bool `env:"ROUTE_BY_LATENCY" envDefault:"false" yaml:"route_by_latency"`
 	RouteRandomly  bool `env:"ROUTE_RANDOMLY" envDefault:"false" yaml:"route_randomly"`
+
+	// 传输层加密。TLSEnabled 为 false 时其余 TLS 字段一律忽略（并在校验里报错，
+	// 避免"证书配了却没生效"）；开启后数据节点与哨兵节点共用同一份证书材料。
+	TLSEnabled            bool   `env:"TLS_ENABLED" envDefault:"false" yaml:"tls_enabled"`
+	TLSCAFile             string `env:"TLS_CA_FILE" yaml:"tls_ca_file"`
+	TLSCertFile           string `env:"TLS_CERT_FILE" yaml:"tls_cert_file"`
+	TLSKeyFile            string `env:"TLS_KEY_FILE" yaml:"tls_key_file"`
+	TLSServerName         string `env:"TLS_SERVER_NAME" yaml:"tls_server_name"`
+	TLSInsecureSkipVerify bool   `env:"TLS_INSECURE_SKIP_VERIFY" envDefault:"false" yaml:"tls_insecure_skip_verify"`
 }
 
 // validate 校验 Key 命名空间、地址列表与部署模式是否匹配，以及连接超时。
@@ -66,6 +75,17 @@ func (r Redis) validate() problems {
 		if len(r.Addrs) == 0 {
 			p.add("REDIS_ADDRS must list at least one sentinel address when REDIS_MODE=sentinel")
 		}
+	}
+
+	// TLS 的互斥关系在这里拦下：证书配了却没开开关，等于静默走明文，
+	// 这类"以为加密了"的错误比连不上更难排查。
+	tlsFieldsSet := r.TLSCAFile != "" || r.TLSCertFile != "" || r.TLSKeyFile != "" ||
+		r.TLSServerName != "" || r.TLSInsecureSkipVerify
+	switch {
+	case !r.TLSEnabled && tlsFieldsSet:
+		p.add("REDIS_TLS_* options require REDIS_TLS_ENABLED=true")
+	case r.TLSEnabled && (r.TLSCertFile == "") != (r.TLSKeyFile == ""):
+		p.add("REDIS_TLS_CERT_FILE and REDIS_TLS_KEY_FILE must be set together")
 	}
 
 	for _, item := range []struct {
@@ -104,5 +124,13 @@ func (r Redis) Options() redis.Options {
 		PoolSize:         r.PoolSize,
 		RouteByLatency:   r.RouteByLatency,
 		RouteRandomly:    r.RouteRandomly,
+		TLS: redis.TLSOptions{
+			Enabled:            r.TLSEnabled,
+			CAFile:             r.TLSCAFile,
+			CertFile:           r.TLSCertFile,
+			KeyFile:            r.TLSKeyFile,
+			ServerName:         r.TLSServerName,
+			InsecureSkipVerify: r.TLSInsecureSkipVerify,
+		},
 	}
 }
