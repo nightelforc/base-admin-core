@@ -8,6 +8,7 @@
 | [context取消树.md](context取消树.md) | `context` 的树结构、`propagateCancel`、`cancel`、`Done` | 一棵只向下传播的树 + 一次 `close(channel)`，其余都是便利封装 |
 | [Go并发控制的学习顺序.md](Go并发控制的学习顺序.md) | 学 `context` / 信号 / 优雅关闭的路线与自检题 | 判断标准是「能否预测行为」，不是「读过多少源码」 |
 | [Redis客户端为什么没做成全局变量.md](Redis客户端为什么没做成全局变量.md) | 依赖注入 vs 包级全局变量 | 全局省的是打字时间，注入省的是排查时间 |
+| [context.Value的key为什么不能用string.md](context.Value的key为什么不能用string.md) | `context` 传值的 key 类型选择 | string key 没有类型边界；未导出命名类型让类型系统替你上锁 |
 
 ## 写笔记的约定
 
