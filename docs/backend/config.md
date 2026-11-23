@@ -513,7 +513,9 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 | 3 | 15 | 45 | 60 |
 | 6 | 30 | 90 | 105（超出） |
 
-- 副本越多，单副本的 `max_open_conns` 应越小；也可以在数据库前加 PgBouncer。注意 transaction 模式的 PgBouncer 与 pgx 的 `cache_statement`、会话级 `statement_timeout` 不兼容，需要相应调整。
+- 副本越多，单副本的 `max_open_conns` 应越小；也可以在数据库前加 PgBouncer。
+- 预处理语句由 pgx 的 stdlib 驱动缓存（默认 `cache_statement`），`pkg/postgres` 因此没有开启 GORM 的 `PrepareStmt`：再叠一层 `database/sql` 的语句缓存，只会让同一条 SQL 在每个连接上被 prepare 两次（`stmt_<hash>` 与 `stmtcache_<hash>`），而执行路径与往返次数完全一样，收益为零。
+- transaction 模式的 PgBouncer 与具名预处理语句、会话级 `statement_timeout` 都不兼容：前者会让 `Parse` 落在一条服务端连接、`Bind` 落到另一条，表现为 `prepared statement "..." does not exist`。应对办法是在连接串里加 `default_query_exec_mode=exec`（`simple_protocol` 也可以，但会失去参数类型信息）。当前 DSN 由 `Database.AppDSN()` 固定拼装，尚未暴露这个参数，接 PgBouncer 前需要先补一个配置项。
 - 迁移与 bootstrap 由 Job 执行：Job 期间 1 条连接，运行期为 0；连接账本里仍要给它留 1 条。
 - 连接串里带 `connect_timeout`，以及从 `app.name` 派生的会话标签（`Load` 时写入 `Database`，迁移 Job 追加 `-migrate`）；标签没有独立配置项，日志与 `pg_stat_activity` 里看到的是同一个名字，可以据此对账连接数、慢查询与锁等待。
 - `pkg/postgres.Open` 启动时输出 `postgres pool` 日志，包含 `max_open`、`max_idle` 与服务器的 `max_connections`、`superuser_reserved_connections`；单池就超过服务器可用连接时输出 warning。

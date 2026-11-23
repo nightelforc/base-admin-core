@@ -49,8 +49,12 @@ func Open(ctx context.Context, opts Options) (*gorm.DB, error) {
 		NamingStrategy: schema.NamingStrategy{
 			TablePrefix: opts.TablePrefix,
 		},
-		Logger:                 logger.NewGormLogger(log, opts.LogLevel, opts.SlowQueryThreshold),
-		PrepareStmt:            true,
+		Logger: logger.NewGormLogger(log, opts.LogLevel, opts.SlowQueryThreshold),
+		// 不开启 PrepareStmt：pgx 的 stdlib 驱动默认以 cache_statement 模式自动
+		// prepare 并缓存语句，执行时仍会走这层缓存；再叠一层 database/sql 的语句
+		// 缓存，只会让同一条 SQL 在每个连接上被 prepare 两次（stmt_<hash> 与
+		// stmtcache_<hash>），往返次数却不变。要接 PgBouncer 事务模式，该改的是
+		// 连接串里的 default_query_exec_mode，而不是这个开关。
 		SkipDefaultTransaction: true,
 		NowFunc:                func() time.Time { return time.Now().UTC() },
 	})
