@@ -87,7 +87,7 @@ redis:
   password: ""                        # L3 由 REDIS_PASSWORD 或 REDIS_PASSWORD_FILE 注入
   db: 0                               # L2
   key_prefix: "base-admin:"           # L2 键命名空间，多个部署共库时必须唯一
-  dial_timeout: 5s                    # L2
+  dial_timeout: 3s                    # L2 建连超时，不得大于 read_timeout
   read_timeout: 3s                    # L2
   write_timeout: 3s                   # L2
   pool_size: 20                       # L2

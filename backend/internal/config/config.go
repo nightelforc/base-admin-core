@@ -298,6 +298,26 @@ func (c *Config) validateTimeouts() problems {
 		c.Database.ConnectTimeout >= c.HTTP.RequestTimeout {
 		p.add("DB_CONNECT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
 	}
+
+	// Redis 的等待同样要落在请求预算内。请求在 HTTP 预算到点返回 504 之后，若
+	// Redis 调用还挂着，连接就白白占着，后续请求只能排队等它超时。
+	if c.HTTP.RequestTimeout > 0 {
+		if c.Redis.DialTimeout > 0 && c.Redis.DialTimeout >= c.HTTP.RequestTimeout {
+			p.add("REDIS_DIAL_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
+		}
+		// 一次调用最多经历一次读加一次写，两者之和就是它能为 Redis 等待的上限。
+		if wait := c.Redis.ReadTimeout + c.Redis.WriteTimeout; wait >= c.HTTP.RequestTimeout {
+			p.add("REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
+		}
+	}
+
+	// 建连不该比一次正常读写更慢：两者走同一条链路，建连超时更长只会让
+	// "连不上"暴露得更晚。注意 TLS 握手也算在建连里，开了 TLS 时读超时通常
+	// 也要相应调大，否则这条会先被触发。
+	if c.Redis.DialTimeout > 0 && c.Redis.ReadTimeout > 0 &&
+		c.Redis.DialTimeout > c.Redis.ReadTimeout {
+		p.add("REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT")
+	}
 	return p
 }
 

@@ -49,6 +49,61 @@ database:
 	}
 }
 
+// TestValidateRedisTimeoutsAgainstRequestBudget 覆盖三条 Redis 超时预算规则。
+// 每条都用独立的子测试，避免一处配置同时踩两条规则而看不出是哪条在生效。
+func TestValidateRedisTimeoutsAgainstRequestBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{
+			name: "dial longer than request",
+			value: `
+http:
+  request_timeout: 4s
+redis:
+  dial_timeout: 5s
+  read_timeout: 1s
+  write_timeout: 1s
+`,
+			want: "REDIS_DIAL_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT",
+		},
+		{
+			name: "read plus write longer than request",
+			value: `
+http:
+  request_timeout: 5s
+redis:
+  dial_timeout: 2s
+  read_timeout: 3s
+  write_timeout: 3s
+`,
+			want: "REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT",
+		},
+		{
+			name: "dial slower than read",
+			value: `
+redis:
+  dial_timeout: 4s
+  read_timeout: 2s
+`,
+			want: "REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, tc.value)
+			t.Setenv(ConfigFileEnv, path)
+			t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
+
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Load error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestDescribeSchemaField 钉住 tag → 文案的映射；新增 tag 时这里会提示补翻译。
 func TestDescribeSchemaField(t *testing.T) {
 	for _, tc := range []struct {

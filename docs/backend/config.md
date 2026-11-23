@@ -394,6 +394,9 @@ func (c *Config) Validate() error {
 | 数据库建连超时必须为非负整秒 | `DB_CONNECT_TIMEOUT must be a whole number of seconds (pgx reads it as integer seconds)` |
 | `APP_NAME` 不能超过 56 字节（它会作为 PostgreSQL 会话标签，迁移再追加 `-migrate`） | `APP_NAME must be at most 56 bytes so the PostgreSQL session label fits in 63 ...` |
 | 数据库建连超时必须短于请求超时 | `DB_CONNECT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
+| Redis 建连超时必须短于请求超时 | `REDIS_DIAL_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
+| Redis 读 + 写超时之和必须短于请求超时（一次调用最坏情况） | `REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
+| Redis 建连超时不得大于读超时 | `REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT` |
 | HTTP 请求体上限必须为正 | `HTTP_MAX_BODY_BYTES must be positive` |
 | HTTP/Redis 关键超时、登录窗口、封禁时长必须为正 | `HTTP_READ_TIMEOUT must be positive` |
 | `HTTP_IDLE_TIMEOUT` 不能为负（0 合法，回退到 `ReadTimeout`） | `HTTP_IDLE_TIMEOUT must not be negative` |
