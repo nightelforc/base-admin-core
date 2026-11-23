@@ -55,8 +55,12 @@ func Open(ctx context.Context, opts Options) (*gorm.DB, error) {
 		// 缓存，只会让同一条 SQL 在每个连接上被 prepare 两次（stmt_<hash> 与
 		// stmtcache_<hash>），往返次数却不变。要接 PgBouncer 事务模式，该改的是
 		// 连接串里的 default_query_exec_mode，而不是这个开关。
-		SkipDefaultTransaction: true,
-		NowFunc:                func() time.Time { return time.Now().UTC() },
+		//
+		// 保留 GORM 的默认事务：一次写操作（连同它的关联保存与回调）要么整体提交，
+		// 要么整体回滚。单条语句本身是原子的，这层事务保护的是"一次调用写多行"——
+		// 关掉它可以少两次往返，代价是多语句部分生效。跨调用的原子性依然要显式
+		// 使用 Transaction，隐式事务只覆盖单次调用。
+		NowFunc: func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
