@@ -139,6 +139,11 @@ Kubernetes 清单见 [`backend/deploy/k8s/configmap.yaml`](../backend/deploy/k8s
 | `SECURITY_LOGIN_*` | 按安全策略调整 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 首次部署设置强密码；创建完成后可从环境变量中移除 |
 
+表中的 L3 口令也可以只给路径：`JWT_SECRET_FILE`、`DB_PASSWORD_FILE`、`REDIS_PASSWORD_FILE`、
+`REDIS_SENTINEL_PASSWORD_FILE`、`BOOTSTRAP_ADMIN_PASSWORD_FILE` 指向 Secret 卷挂载的文件，进程启动时读取内容，
+与直接设置同名变量二选一。这样明文不会出现在 `Deployment` 清单与进程环境变量里，细节见
+[`backend/config.md`](backend/config.md)。
+
 ## 5. 与其它系统共用数据库
 
 本模板支持多个部署共用一个 schema：

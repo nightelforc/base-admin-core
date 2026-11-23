@@ -9,11 +9,12 @@
 //
 // 环境变量只用于覆盖，适合由 ConfigMap / Secret 注入；变量名由组件前缀加字段名组成，
 // 例如 app.name 对应 APP_NAME，http.request_timeout 对应 HTTP_REQUEST_TIMEOUT。
-// 敏感项不要写入 config.yaml，应只通过环境变量或 Secret 提供。
+// 敏感项不要写入 config.yaml，应只通过环境变量或 Secret 提供；环境变量也可以只给
+// 路径（X_FILE），由程序读取挂载进来的文件内容，见 secrets.go。
 //
-// Load() 是唯一入口：先读取配置文件，再应用环境变量并校验。配置文件必须写全所有
-// 配置项；缺失的字段会保持 Go 零值，通常会被启动校验拒绝。跨字段问题会一次性全部
-// 列出，配置有误的进程绝不带病启动。
+// Load() 是唯一入口：先读取配置文件，再应用环境变量、读取密钥文件并校验。配置文件
+// 必须写全所有配置项；缺失的字段会保持 Go 零值，通常会被启动校验拒绝。跨字段问题会
+// 一次性全部列出，配置有误的进程绝不带病启动。
 //
 // 每个组件一个文件，文件名就是它配置的组件（app、http、database、redis……）。
 // 因此新增配置项需要同时改对应组件的文件与 config.yaml；config.go 只保留根配置树、
@@ -76,6 +77,12 @@ func Load() (*Config, error) {
 	// 环境变量只覆盖显式设置的键，未设置的字段保留 config.yaml 中的值。
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("apply environment overrides: %w", err)
+	}
+
+	// 密钥文件在环境变量之后读取：X_FILE 与 X 写入的是同一个字段，后续校验
+	// 因此对两种来源一视同仁。
+	if err := applySecretFiles(cfg); err != nil {
+		return nil, err
 	}
 
 	cfg.source = path

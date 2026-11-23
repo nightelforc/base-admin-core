@@ -49,7 +49,7 @@ log.Info("starting",
 
 `Summary()` 不包含任何密码或密钥，只输出配置文件路径、应用标识、监听地址、数据库地址/用户、Redis 地址、JWT issuer/TTL 等排障所需字段。
 
-### 2.2 `Load()` 的五个步骤
+### 2.2 `Load()` 的六个步骤
 
 入口在 [`backend/internal/config/config.go`](../../backend/internal/config/config.go)：
 
@@ -58,8 +58,9 @@ log.Info("starting",
 | 1 | `resolveConfigFile()` 确定配置文件路径 | 找不到文件、路径是目录、`CONFIG_FILE` 指向不存在的文件 |
 | 2 | 用 `yaml.Decoder` 把文件解码到空白 `cfg` | 读取失败、空文件、YAML 语法错误、未知字段 |
 | 3 | 用 `env.Parse` 应用显式设置的环境变量 | 环境变量类型转换失败，返回 `apply environment overrides` |
-| 4 | 记录实际加载的路径到 `cfg.source` | 不会失败 |
-| 5 | 调用 `cfg.Validate()` | 结构体 tag 或跨字段校验不通过 |
+| 4 | `applySecretFiles()` 把 `X_FILE` 指向的文件内容读入对应字段 | `X` 与 `X_FILE` 同时非空、`X_FILE` 为空串、文件不存在/不可读/内容为空 |
+| 5 | 记录实际加载的路径到 `cfg.source` | 不会失败 |
+| 6 | 调用 `cfg.Validate()` | 结构体 tag 或跨字段校验不通过 |
 
 可以简化为：
 
@@ -73,7 +74,10 @@ loadConfigFile(path, cfg)
 // 3. 应用显式环境变量
 env.Parse(cfg)
 
-// 4. 记录来源 + 5. 校验
+// 4. 读取 *_FILE 指向的密钥文件
+applySecretFiles(cfg)
+
+// 5. 记录来源 + 6. 校验
 cfg.source = path
 cfg.Validate()
 ```
@@ -104,7 +108,7 @@ config.yaml  ->  环境变量
 | --- | --- | --- | --- |
 | L1 基础运行 | `app`、`log`、`http`、`bootstrap` | `config.yaml` | 应用标识、日志、监听地址、超时、首次启动引导（管理员密码除外）；多数环境相同 |
 | L2 基础设施 | `database`、`redis`、`cors` | `config.yaml` + ConfigMap | 地址、库名、连接池、跨域策略；按环境变化 |
-| L3 安全敏感 | `jwt`、`security`，以及数据库/Redis/初始管理员口令 | Secret / 环境变量 | 密钥、密码策略、登录限流、审计；不写入版本库 |
+| L3 安全敏感 | `jwt`、`security`，以及数据库/Redis/初始管理员口令 | Secret / 环境变量 / `*_FILE` 文件 | 密钥、密码策略、登录限流、审计；不写入版本库 |
 
 分层的目的不是限制覆盖方式，而是明确“哪些值可以进 Git、哪些值必须由 Secret 提供”。任何一层都可以被环境变量覆盖。
 
@@ -197,6 +201,47 @@ http:
 
 `yaml.v3` 会把它们解析成 `time.Duration`，不需要在代码里额外转换。
 
+### 3.6 密钥文件（`*_FILE`）
+
+敏感项除了直接写环境变量，还可以让环境变量只给出文件路径：
+
+```bash
+JWT_SECRET_FILE=/run/secrets/jwt_secret
+DB_PASSWORD_FILE=/run/secrets/db_password
+REDIS_PASSWORD_FILE=/run/secrets/redis_password
+REDIS_SENTINEL_PASSWORD_FILE=/run/secrets/redis_sentinel_password
+BOOTSTRAP_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
+```
+
+`Load()` 在 `env.Parse` 之后读取这些文件，把内容写回对应字段。因此文件与直接设置 `X` 完全等价：长度、占位符、生产环境策略等校验对两种来源一视同仁。
+
+实现见 [`secrets.go`](../../backend/internal/config/secrets.go)：变量名逐条列在 `secretTargets` 表里（`env` 与 `fileEnv` 成对出现，便于按变量名搜索），`applySecretFiles()` 负责读取文件、冲突校验并写回字段。
+
+这是 Docker Secret、Kubernetes Secret 卷挂载、Vault Agent 注入的通用形态——容器环境变量里只有路径，明文密码不会出现在 `Deployment` 清单、`docker inspect` 或 `/proc/1/environ` 里。
+
+两个通道、多种来源，容易混淆，先固定一下口径：
+
+| 通道 | 环境变量形态 | 常见来源 |
+| --- | --- | --- |
+| `X`（值内联） | `DB_PASSWORD=明文` | shell `export`、`.env`、systemd `Environment=` / `EnvironmentFile=`、`docker -e` / `--env-file`、K8s `env` / `envFrom.secretRef`、CI 变量组 |
+| `X_FILE`（路径内联） | `DB_PASSWORD_FILE=/路径` | K8s Secret 卷挂载、docker compose `secrets:`、systemd `LoadCredential=`、手写 `chmod 600` 文件、Vault Agent 渲染 |
+
+`.env` 与 Kubernetes Secret 都不是“第三种通道”，而是给上面两个通道供值的来源：`.env` 由 `godotenv` 读入进程环境，效果等同 `export`；Secret 用 `envFrom` 注入走 `X`，用卷挂载走 `X_FILE`。同一项在同一个进程里只能选一条通道——`X` 与 `X_FILE` 同时非空会被启动校验拒绝。
+
+来源之间还有一条容易忽略的规则：`godotenv.Load` **不覆盖**已存在的环境变量。因此 shell / systemd 里的 `X` 优先于 `.env` 里的同名项；但也正因为 `.env` 里的值同样进入进程环境，外部再设 `X_FILE` 一样会触发冲突——从 `.env` 迁到文件挂载时，先把 `.env` 里对应那行注释掉。
+
+`CONFIG_FILE` 不在这两个通道里：它指定的是 `config.yaml` 本身的位置，和口令注入是两条独立的轴。
+
+程序侧的判定规则只有下面几条：
+
+| 规则 | 行为 |
+| --- | --- |
+| 支持范围 | 仅 `JWT_SECRET`、`DB_PASSWORD`、`REDIS_PASSWORD`、`REDIS_SENTINEL_PASSWORD`、`BOOTSTRAP_ADMIN_PASSWORD` 五项；其余配置项仍用普通环境变量覆盖 |
+| `X` 与 `X_FILE` 同时非空 | 报错，不定义优先级；`X` 为空串时视为未提供，便于流水线变量缺失的场景 |
+| `X_FILE` 设置为空串 | 报错，这类值通常来自流水线里没填的变量 |
+| 文件不存在、不可读、内容为空或只有空白 | 报错，不会退化成空密码 |
+| 文件末尾换行 | 自动去掉（`\n`、`\r\n` 均可），其余字节原样保留 |
+
 ## 4. 配置树与命名
 
 ### 4.1 组件划分
@@ -257,9 +302,9 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | --- | --- |
 | `app.name` | `APP_NAME` |
 | `http.request_timeout` | `HTTP_REQUEST_TIMEOUT` |
-| `database.password` | `DB_PASSWORD`（不是 `DATABASE_PASSWORD`） |
+| `database.password` | `DB_PASSWORD`（不是 `DATABASE_PASSWORD`），或 `DB_PASSWORD_FILE=<路径>` |
 | `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
-| `jwt.secret` | `JWT_SECRET` |
+| `jwt.secret` | `JWT_SECRET`，或 `JWT_SECRET_FILE=<路径>` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
 
 切片字段（如 `http.trusted_proxies`、`cors.allowed_origins`）在环境变量中使用逗号分隔：

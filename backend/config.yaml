@@ -47,7 +47,7 @@ http:
 
 bootstrap:
   admin_username: admin               # L1 空值表示跳过首次管理员创建
-  admin_password: ""                  # L3 空值表示随机生成并打印一次
+  admin_password: ""                  # L3 空值表示随机生成并打印一次；也可用 BOOTSTRAP_ADMIN_PASSWORD_FILE
   admin_nickname: 超级管理员           # L1
   admin_email: ""                     # L1
 
@@ -59,7 +59,7 @@ database:
   host: 127.0.0.1                     # L2
   port: 5432                          # L2
   user: postgres                      # L2
-  password: ""                        # L3 由 DB_PASSWORD / Secret 注入
+  password: ""                        # L3 由 DB_PASSWORD 或 DB_PASSWORD_FILE 注入
   name: postgres                      # L2
   sslmode: disable                    # L2 disable | allow | prefer | require | verify-ca | verify-full
   timezone: Asia/Shanghai             # L2 连接会话时区
@@ -79,9 +79,9 @@ redis:
   addrs: ["127.0.0.1:6379"]           # L2 单机：恰好一个数据节点；哨兵：哨兵节点列表
   master_name: ""                     # L2 哨兵模式必填：主节点名
   sentinel_username: ""               # L3 可选，连接哨兵本身的 ACL 用户名
-  sentinel_password: ""               # L3 由 REDIS_SENTINEL_PASSWORD / Secret 注入
+  sentinel_password: ""               # L3 由 REDIS_SENTINEL_PASSWORD 或 ..._FILE 注入
   username: ""                        # L3 可选 ACL 用户名
-  password: ""                        # L3 由 REDIS_PASSWORD / Secret 注入
+  password: ""                        # L3 由 REDIS_PASSWORD 或 REDIS_PASSWORD_FILE 注入
   db: 0                               # L2
   key_prefix: "base-admin:"           # L2 键命名空间，多个部署共库时必须唯一
   dial_timeout: 5s                    # L2
@@ -110,7 +110,7 @@ cors:
 # ===========================================================================
 
 jwt:
-  secret: ""                          # L3 必填，≥32 字符，由 JWT_SECRET / Secret 注入
+  secret: ""                          # L3 必填，≥32 字符，由 JWT_SECRET 或 JWT_SECRET_FILE 注入
   issuer: base-admin                  # L3
   audience: base-admin-web            # L3
   access_ttl: 30m                     # L3
