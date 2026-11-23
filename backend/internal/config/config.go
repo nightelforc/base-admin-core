@@ -85,6 +85,10 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	// 会话标签在这里一次性派生：Database 不暴露设置入口，日志与 PostgreSQL 用的
+	// 必然是同一个 app.name。放在校验之前，校验失败时也不影响错误信息。
+	cfg.Database.sessionLabel = strings.TrimSpace(cfg.App.Name)
+
 	cfg.source = path
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -179,13 +183,17 @@ func (c *Config) Validate() error {
 	return p.err()
 }
 
-// validateTimeouts 保证数据库语句超时早于请求超时。反过来的话，请求早已返回
-// 504、连接也还给了池子，数据库里的语句却还在跑，这个超时等于白设。
+// validateTimeouts 保证数据库侧的等待都早于请求超时。反过来的话，请求早已返回
+// 504、连接也还给了池子，数据库里的语句却还在跑，这些超时等于白设。
 func (c *Config) validateTimeouts() problems {
 	var p problems
 	if c.HTTP.RequestTimeout > 0 && c.Database.StatementTimeout > 0 &&
 		c.Database.StatementTimeout >= c.HTTP.RequestTimeout {
 		p.add("DB_STATEMENT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
+	}
+	if c.HTTP.RequestTimeout > 0 && c.Database.ConnectTimeout > 0 &&
+		c.Database.ConnectTimeout >= c.HTTP.RequestTimeout {
+		p.add("DB_CONNECT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
 	}
 	return p
 }
@@ -244,6 +252,7 @@ func (c *Config) Summary() map[string]any {
 		"db_user":      c.Database.User,
 		"db_ssl":       c.Database.SSLMode,
 		"table_prefix": c.Database.TablePrefix,
+		"db_connect":   c.Database.ConnectTimeout.String(),
 		"redis_mode":   c.Redis.Mode,
 		"redis_addrs":  strings.Join(c.Redis.Addrs, ","),
 		"redis_master": c.Redis.MasterName,

@@ -53,7 +53,7 @@ func run() error {
 
 	applied, err := migrate.Run(ctx, migrate.Options{
 		FS:     migrations.FS,
-		DSN:    cfg.Database.DSN(),
+		DSN:    cfg.Database.MigrateDSN(),
 		Prefix: cfg.Database.TablePrefix,
 		Log:    log,
 	})

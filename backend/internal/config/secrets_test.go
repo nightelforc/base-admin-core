@@ -69,8 +69,8 @@ app:
 	}
 
 	// 文件只是输入的另一种形态：消费方拿到的仍然是普通配置值。
-	if !strings.Contains(cfg.Database.AppDSN(), "db-pass-1") {
-		t.Fatalf("AppDSN() = %q, want it to carry the password from file", cfg.Database.AppDSN())
+	if dsn := cfg.Database.AppDSN(); !strings.Contains(dsn, "db-pass-1") {
+		t.Fatalf("AppDSN() = %q, want it to carry the password from file", dsn)
 	}
 	if cfg.Redis.Options().SentinelPassword != "sentinel-pass-1" {
 		t.Fatalf("Redis.Options().SentinelPassword did not receive the file value")

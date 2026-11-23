@@ -151,7 +151,8 @@ Kubernetes 清单见 [`backend/deploy/k8s/configmap.yaml`](../backend/deploy/k8s
 - 所有表名都带 `DB_TABLE_PREFIX`，建表、查询、原生 SQL 全部走同一前缀；
 - 迁移记录表为 `<prefix>schema_migrations`，不会与别的系统的迁移表冲突；
 - 迁移过程持有 `pg_advisory_lock`，锁的 key 由 `<prefix>schema_migrations` 计算，互不干扰；
-- Redis 的 key 全部以 `REDIS_KEY_PREFIX` 开头（会话、登录限流）。
+- Redis 的 key 全部以 `REDIS_KEY_PREFIX` 开头（会话、登录限流）；
+- 连接串的 `application_name` 固定取 `APP_NAME`（迁移连接追加 `-migrate`），共库时给每个部署配不同的 `APP_NAME`，`pg_stat_activity` 里就能分清连接属于谁。
 
 注意事项：
 

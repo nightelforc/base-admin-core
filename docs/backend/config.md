@@ -303,9 +303,12 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | `app.name` | `APP_NAME` |
 | `http.request_timeout` | `HTTP_REQUEST_TIMEOUT` |
 | `database.password` | `DB_PASSWORD`（不是 `DATABASE_PASSWORD`），或 `DB_PASSWORD_FILE=<路径>` |
+| `database.connect_timeout` | `DB_CONNECT_TIMEOUT`（必须是整秒） |
 | `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
 | `jwt.secret` | `JWT_SECRET`，或 `JWT_SECRET_FILE=<路径>` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
+
+> 没有 `DB_APPLICATION_NAME`：PostgreSQL 会话标签直接取 `app.name`（`Load` 时派生，迁移连接追加 `-migrate`）。多部署共库时给每个部署配不同的 `APP_NAME` 即可。
 
 切片字段（如 `http.trusted_proxies`、`cors.allowed_origins`）在环境变量中使用逗号分隔：
 
@@ -386,6 +389,9 @@ func (c *Config) Validate() error {
 | 应用时区、数据库时区必须能被 `time.LoadLocation` 加载 | `APP_TIMEZONE "Mars/Base" is not a known IANA time zone` |
 | JWT access/refresh 必须为正，且 refresh > access | `JWT_REFRESH_TTL must be greater than JWT_ACCESS_TTL` |
 | 数据库空闲连接数不能超过最大连接数 | `DB_MAX_IDLE_CONNS must not exceed DB_MAX_OPEN_CONNS` |
+| 数据库建连超时必须为非负整秒 | `DB_CONNECT_TIMEOUT must be a whole number of seconds (pgx reads it as integer seconds)` |
+| `APP_NAME` 不能超过 56 字节（它会作为 PostgreSQL 会话标签，迁移再追加 `-migrate`） | `APP_NAME must be at most 56 bytes so the PostgreSQL session label fits in 63 ...` |
+| 数据库建连超时必须短于请求超时 | `DB_CONNECT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
 | HTTP 请求体上限必须为正 | `HTTP_MAX_BODY_BYTES must be positive` |
 | HTTP/Redis 关键超时、登录窗口、封禁时长必须为正 | `HTTP_READ_TIMEOUT must be positive` |
 | `HTTP_IDLE_TIMEOUT` 不能为负（0 合法，回退到 `ReadTimeout`） | `HTTP_IDLE_TIMEOUT must not be negative` |
@@ -425,7 +431,7 @@ invalid configuration:
 | 消费方 | 使用的配置 | 说明 |
 | --- | --- | --- |
 | `cmd/server` | `config.Load()`、`cfg.Summary()` | 加载配置并输出脱敏摘要 |
-| `pkg/postgres` | `cfg.Database.Options()` | 连接地址、账号、SSL、连接池、慢查询阈值 |
+| `pkg/postgres` | `cfg.Database.Options()` | 连接串（含 `statement_timeout`、会话标签 `app.name`、`connect_timeout`）、连接池、慢查询阈值 |
 | `pkg/redis` | `cfg.Redis.Options()` | 地址、账号、DB、超时、连接池、TLS 证书材料 |
 | `cmd/migrate` | `config.Load()`、`cfg.Database`、`cfg.Bootstrap` | Job 中执行迁移并创建首个管理员，使用与应用相同的配置 |
 | `build()` | `cfg.Security`、`cfg.JWT` | 密码策略、令牌签发 |
@@ -444,35 +450,31 @@ invalid configuration:
 | `HTTP_READ_HEADER_TIMEOUT` | `net/http` | 读取请求头的最长时间 |
 | `HTTP_READ_TIMEOUT` | `net/http` | 读取完整请求的最长时间 |
 | `HTTP_WRITE_TIMEOUT` | `net/http` | 写响应的最长时间 |
-| `HTTP_REQUEST_TIMEOUT` | 业务 handler 外层 | 单请求处理时限，超时返回 504 并取消上下文 |
+| `HTTP_REQUEST_TIMEOUT` | 请求 `context` | 给每个请求注入截止时间；下游据此中断，处理器返回 504 信封 |
 | `HTTP_IDLE_TIMEOUT` | `net/http` | keep-alive 连接空闲时间 |
 | `HTTP_SHUTDOWN_TIMEOUT` | 优雅退出 | 等待在途请求结束的最长时间 |
 
 ### 6.2 `HTTP.RequestTimeout` 的实现
 
-它不是在 Gin 路由里加一个普通中间件，而是在 `http.Server.Handler` 外层包装：
+它不在 Gin 路由里加中间件，而是在 `http.Server.Handler` 外层包一层 `newDeadlineHandler`，只做一件事：给每个请求的 `context` 加上截止时间。
 
 ```text
 http.Server
-  └─ RequestTimeoutHandler
+  └─ newDeadlineHandler（仅注入 ctx 截止时间）
        └─ Gin Engine
             └─ RequestID → AccessLog → Recovery → CORS → BodyLimit → ...
 ```
 
-原因是 `gin.Context` 不能被另一个 goroutine 安全复用；如果直接在 Gin 中间件里起 goroutine 等待 handler，会有数据竞争风险。包装在 `http.Handler` 层可以：
+这一层**不缓冲响应，也不替处理器写 504**。截止时间是预算，由各层自己兑现：
 
-- 在独立 goroutine 中执行下游 handler。
-- 把响应先写入缓冲区，正常完成后再复制回真实 `ResponseWriter`。
-- 超时后返回 HTTP 504，响应体为：
+- 数据库：连接串里的 `statement_timeout` 让服务端在预算内终止语句，避免“调用方已经走了、语句还在跑”。
+- Redis：连接级的读写超时。
+- 处理器：拿到 `context.DeadlineExceeded` 后用 `response.Fail` 返回 504 信封（`{"code": 50400, "message": "请求处理超时"}`），下游的 `*gorm.DB` / Redis 调用随 ctx 取消而中断。
+- 处理器返回时 ctx 已过期，`newDeadlineHandler` 补一条 `request exceeded deadline` 日志（带 `request_id`），用于定位慢接口。
 
-  ```json
-  { "code": 50400, "message": "请求处理超时" }
-  ```
+如果处理器完全不看 context，客户端最终由反向代理或 `HTTP_WRITE_TIMEOUT` 断开——这属于实现缺陷，而不是这一层的责任。也正因为不缓冲，SSE、WebSocket、流式下载才能正常工作。
 
-- 取消请求的 `context.Context`，让数据库、Redis 等下游调用随之中断，及时释放资源。
-- 把下游 panic 重新抛给外层，交给 Gin Recovery / `net/http` 处理。
-
-`HTTP_REQUEST_TIMEOUT=0` 表示关闭该包装，直接使用原 handler。启用时必须小于 `HTTP_WRITE_TIMEOUT`，否则连接会先被写超时掐断，504 响应发不出去。
+`HTTP_REQUEST_TIMEOUT=0` 表示不注入截止时间。启用时必须小于 `HTTP_WRITE_TIMEOUT`，否则连接会先被写超时掐断，504 响应发不出去。
 
 ### 6.3 `OperationLogBodyLimit` 不是请求体上限
 
@@ -506,6 +508,7 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 
 - 副本越多，单副本的 `max_open_conns` 应越小；也可以在数据库前加 PgBouncer。注意 transaction 模式的 PgBouncer 与 pgx 的 `cache_statement`、会话级 `statement_timeout` 不兼容，需要相应调整。
 - 迁移与 bootstrap 由 Job 执行：Job 期间 1 条连接，运行期为 0；连接账本里仍要给它留 1 条。
+- 连接串里带 `connect_timeout`，以及从 `app.name` 派生的会话标签（`Load` 时写入 `Database`，迁移 Job 追加 `-migrate`）；标签没有独立配置项，日志与 `pg_stat_activity` 里看到的是同一个名字，可以据此对账连接数、慢查询与锁等待。
 - `pkg/postgres.Open` 启动时输出 `postgres pool` 日志，包含 `max_open`、`max_idle` 与服务器的 `max_connections`、`superuser_reserved_connections`；单池就超过服务器可用连接时输出 warning。
 - 生产环境建议在 ConfigMap/Secret 中显式设置 `DB_MAX_OPEN_CONNS`（以及需要时的 `DB_MAX_IDLE_CONNS`），不要依赖模板默认值。
 

@@ -51,7 +51,7 @@ pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis
 - `DB_TABLE_PREFIX` 只允许 `^[a-z][a-z0-9_]*$`（或空），避免拼接出非法表名。
 - HTTP / Redis 的超时以及登录窗口、封禁时长必须为正数；`HTTP_IDLE_TIMEOUT`、`CORS_MAX_AGE`、`HTTP_REQUEST_TIMEOUT` 不得为负，`HTTP_WRITE_TIMEOUT` 允许为 `0`（服务长连接时必须为 0）。
 - `HTTP_REQUEST_TIMEOUT` 是注入请求 context 的处理预算，到点后下游调用随上下文取消而中断、处理器返回 504。`0` 表示不注入；启用且设置了 `HTTP_WRITE_TIMEOUT` 时必须更短，否则连接会先被写超时掐断。
-- `DB_STATEMENT_TIMEOUT` 是数据库侧的止损点，必须短于 `HTTP_REQUEST_TIMEOUT`。请求超时只会让调用方放弃，服务端的语句仍在跑；只有语句超时能真正终止它。它只作用于应用连接池，迁移走不带该参数的 `DSN()`，因为大表的 DDL 可能合法地跑得更久。
+- `DB_STATEMENT_TIMEOUT` 是数据库侧的止损点，必须短于 `HTTP_REQUEST_TIMEOUT`。请求超时只会让调用方放弃，服务端的语句仍在跑；只有语句超时能真正终止它。它只作用于应用连接池，迁移走不带该参数的 `MigrateDSN()`，因为大表的 DDL 可能合法地跑得更久。
 - `JWT_SECRET` 至少 32 字符，缺失或过短直接启动失败。
 - 日志启动时输出 `config.Summary()`，敏感字段已脱敏。
 

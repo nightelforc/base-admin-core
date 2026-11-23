@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nightelforc/base-admin-core/backend/pkg/postgres"
@@ -35,9 +36,26 @@ type Database struct {
 
 	// StatementTimeout 让 PostgreSQL 自己给单条语句设上限。请求超时只能让调用方
 	// 提前放弃，服务端语句仍会继续跑；这个参数才是数据库侧的止损点。0 表示不设置。
-	// 该值不含迁移：迁移走 DSN()，因为大表的 DDL 合法地超过应用查询的时限。
+	// 该值不含迁移：迁移走 MigrateDSN()，因为大表的 DDL 合法地超过应用查询的时限。
 	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT" yaml:"statement_timeout"`
+
+	// ConnectTimeout 限制 TCP 建连这一段：网络黑洞时 SYN 重传会把新连接拖到调用方
+	// 的 ctx 上限，进而占满连接池槽位。pgx 以整秒接收，0 表示不设置。它管不到 TLS
+	// 握手与认证，那两段仍受调用方 ctx 约束。
+	ConnectTimeout time.Duration `env:"CONNECT_TIMEOUT" yaml:"connect_timeout"`
+
+	// sessionLabel 不是配置项：它由 Load 从 app.name 派生后写入，没有 yaml/env tag，
+	// 外部无法单独设置。日志里的 app 字段与 pg_stat_activity.application_name 因此
+	// 必然同名，排查时不需要先对表。
+	sessionLabel string
 }
+
+// sessionLabelMaxBytes 是 PostgreSQL 标识符上限 NAMEDATALEN-1。app.name 会原样
+// 作为会话标签，超过这个长度会被服务端静默截断，所以校验放在 App 上。
+const sessionLabelMaxBytes = 63
+
+// migrateSessionSuffix 让迁移会话在 pg_stat_activity 里与应用的连接区分开。
+const migrateSessionSuffix = "-migrate"
 
 // validate 校验表前缀、连接时区与连接池容量之间的约束。
 func (d Database) validate() problems {
@@ -54,20 +72,29 @@ func (d Database) validate() problems {
 	if d.StatementTimeout < 0 {
 		p.add("DB_STATEMENT_TIMEOUT must not be negative")
 	}
+	if d.ConnectTimeout < 0 {
+		p.add("DB_CONNECT_TIMEOUT must not be negative")
+	}
+	if d.ConnectTimeout > 0 && d.ConnectTimeout%time.Second != 0 {
+		p.add("DB_CONNECT_TIMEOUT must be a whole number of seconds (pgx reads it as integer seconds)")
+	}
 	return p
 }
 
-// DSN 生成 libpq / pgx 兼容的连接串，不含语句超时：迁移沿用它，因为大表的
-// DDL 可能合法地跑过应用查询的时限。查询串是手工拼的：url.Values 会转义
-// Asia/Shanghai 这类时区中的斜杠，PostgreSQL 随后会把它当成未知时区拒绝。
-func (d Database) DSN() string { return d.dsn(0) }
+// MigrateDSN 是迁移 Job 的连接串：不含语句超时（大表的 DDL 可能合法地跑过应用
+// 查询的时限），会话标签追加 -migrate，便于在 pg_locks / pg_stat_activity 里认出
+// 正在持有 advisory lock 的是迁移而不是服务。
+//
+// 标签来自 app.name（Load 时写入 sessionLabel），不单独配置：同一个进程在日志和
+// 数据库里应该用同一个名字，否则出了事故还得先对表。
+func (d Database) MigrateDSN() string { return d.dsn(0, migrateSessionSuffix) }
 
-// AppDSN 是应用连接池使用的连接串：在 DSN 之上带 statement_timeout。
-// 之所以放进连接串而不是逐条执行 SET，是因为它按会话生效，连接池复用连接时
+// AppDSN 是应用连接池使用的连接串：带 statement_timeout 与不带后缀的会话标签。
+// 之所以把超时放进连接串而不是逐条执行 SET，是因为它按会话生效，连接池复用连接时
 // 不必再补一次，也不会漏掉任何一个新建的连接。
-func (d Database) AppDSN() string { return d.dsn(d.StatementTimeout) }
+func (d Database) AppDSN() string { return d.dsn(d.StatementTimeout, "") }
 
-func (d Database) dsn(statementTimeout time.Duration) string {
+func (d Database) dsn(statementTimeout time.Duration, suffix string) string {
 	u := url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(d.User, d.Password),
@@ -82,8 +109,32 @@ func (d Database) dsn(statementTimeout time.Duration) string {
 	if statementTimeout > 0 {
 		query += "&statement_timeout=" + strconv.FormatInt(statementTimeout.Milliseconds(), 10)
 	}
+	if name := d.labelWith(suffix); name != "" {
+		query += "&application_name=" + escapeQueryValue(name)
+	}
+	if d.ConnectTimeout > 0 {
+		// pgx 只接受整数秒（pgconn 的 parseConnectTimeoutSetting 用 ParseInt 后乘
+		// time.Second），写成 "5s" 会在建连时报解析错误，所以这里先折算成秒。
+		query += "&connect_timeout=" + strconv.FormatInt(int64(d.ConnectTimeout/time.Second), 10)
+	}
 	u.RawQuery = query
 	return u.String()
+}
+
+// labelWith 返回会话标签：从 app.name 派生来的应用名 + 角色后缀（应用侧为空，
+// 迁移为 -migrate）。名称为空则不发送该参数（PostgreSQL 会显示为空串）。
+func (d Database) labelWith(suffix string) string {
+	name := strings.TrimSpace(d.sessionLabel)
+	if name == "" {
+		return ""
+	}
+	return name + suffix
+}
+
+// escapeQueryValue 对参数值做 percent 编码。不能直接用 url.QueryEscape：它把空格
+// 编成 "+"，而 pgx 的 URI 解码不会把 "+" 还原成空格。
+func escapeQueryValue(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
 }
 
 // Options 把数据库配置转换成 postgres 包需要的连接参数。
