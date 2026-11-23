@@ -72,6 +72,7 @@ func applySecretFiles(cfg *Config) error {
 		}
 		// 写入配置树：后续 Validate 与消费方看到的都是普通字段值。
 		*target.dest = value
+		cfg.secretFiles = append(cfg.secretFiles, target.env)
 	}
 	return p.err()
 }

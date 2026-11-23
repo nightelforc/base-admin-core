@@ -47,7 +47,7 @@ log.Info("starting",
 )
 ```
 
-`Summary()` 不包含任何密码或密钥，只输出配置文件路径、应用标识、监听地址、数据库地址/用户、Redis 地址、JWT issuer/TTL 等排障所需字段。
+`Summary()` 不包含任何密码或密钥，也不包含它们的长度；每个键的命名就是该字段在 `config.yaml` 里的路径（如 `database.max_open_conns`、`security.login_window`），因此启动日志可以和配置文件逐条对上。渲染有三条约定：`0` 时长的字段输出 `"off"`（而不是容易被误读成零超时的 `"0s"`），空列表与空字符串输出 `"none"`，`secrets.from_files` 只列出本次经 `X_FILE` 注入的变量名（没有则 `"none"`）。
 
 ### 2.2 `Load()` 的六个步骤
 
@@ -422,7 +422,7 @@ invalid configuration:
 ### 5.4 `Location()` 与 `Summary()`
 
 - `Location()` 返回 `App.Timezone` 对应的时区；解析失败时回落到 `UTC`。正常情况下 `Validate()` 已经保证时区合法，这个回落主要用于防御性调用。
-- `Summary()` 返回适合打日志的 `map[string]any`，包含 `config_file`、应用信息、监听地址、HTTP 请求超时、数据库地址/用户、Redis 地址、JWT issuer/TTL 等。**不要绕过 `Summary()` 直接把整个 `Config` 打进日志**，否则可能泄漏凭据。
+- `Summary()` 返回适合打日志的 `map[string]any`，覆盖从 `app` 到 `bootstrap` 的全部非敏感开关：键名即 `config.yaml` 路径（`<组件>.<字段>`），值里时长为 Go duration 字符串、`0` 显示为 `off`、空列表/空串显示为 `none`。唯一与密钥相关的键是 `secrets.from_files`（只列变量名）。**不要绕过 `Summary()` 直接把整个 `Config` 打进日志**，否则可能泄漏凭据；新增配置项时同步补进 `Summary()`，`summary_test.go` 会检查各组件是否有键遗漏。
 
 ## 6. 配置如何被消费
 

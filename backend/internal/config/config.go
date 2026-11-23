@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,6 +61,10 @@ type Config struct {
 
 	// source 记录本次实际加载的配置文件路径，仅用于启动日志，不参与序列化。
 	source string
+
+	// secretFiles 记录本次经 X_FILE 注入的项（只记变量名，不记内容），Summary 会
+	// 带上：运维看启动日志就能确认"这台机器用的是挂载密钥"而不是环境变量明文。
+	secretFiles []string
 }
 
 // Load 按“config.yaml -> 环境变量”的顺序装配配置并校验。
@@ -239,31 +244,111 @@ func (c *Config) Location() *time.Location {
 	return loc
 }
 
-// Summary 返回适合打日志的配置视图，所有敏感字段均已脱敏，启动日志不会泄漏凭据。
+// Summary 返回适合打日志的配置视图：键名就是 config.yaml 里的路径，启动日志因此
+// 可以和配置文件逐条对上，也可以按前缀 grep（例如 database.）。
+//
+// 返回值里没有秘密：口令与 JWT 密钥一律不出现，连长度也不报——长度足以反推弱密钥。
+// 唯一与密钥有关的键是 secrets.from_files，它只列"哪些项走了文件注入"的变量名。
 func (c *Config) Summary() map[string]any {
+	// 0 表示"未设置/关闭"，写 0s 容易被误读成零超时，因此单独标注。
+	off := func(d time.Duration) string {
+		if d == 0 {
+			return "off"
+		}
+		return d.String()
+	}
+	// 空列表在日志里是空值，和"忘了配"分不开；空字符串同理。
+	list := func(values []string) string {
+		if len(values) == 0 {
+			return "none"
+		}
+		return strings.Join(values, ",")
+	}
+	text := func(value string) string {
+		if strings.TrimSpace(value) == "" {
+			return "none"
+		}
+		return value
+	}
+
+	files := append([]string(nil), c.secretFiles...)
+	slices.Sort(files)
+
+	// 引导账号为空表示跳过引导，此时也不存在"随机生成密码"这回事。
+	generated := c.Bootstrap.AdminUsername != "" && c.Bootstrap.AdminPassword == ""
+
 	return map[string]any{
-		"config_file":  c.source,
-		"app":          c.App.Name,
-		"env":          c.App.Env,
-		"debug":        c.App.Debug,
-		"http_addr":    c.HTTP.Addr,
-		"http_timeout": c.HTTP.RequestTimeout.String(),
-		"db_host":      fmt.Sprintf("%s:%d/%s", c.Database.Host, c.Database.Port, c.Database.Name),
-		"db_user":      c.Database.User,
-		"db_ssl":       c.Database.SSLMode,
-		"table_prefix": c.Database.TablePrefix,
-		"db_connect":   c.Database.ConnectTimeout.String(),
-		"redis_mode":   c.Redis.Mode,
-		"redis_addrs":  strings.Join(c.Redis.Addrs, ","),
-		"redis_master": c.Redis.MasterName,
-		"redis_db":     c.Redis.DB,
-		"redis_prefix": c.Redis.KeyPrefix,
-		"redis_tls":    c.Redis.TLSEnabled,
-		"jwt_issuer":   c.JWT.Issuer,
-		"jwt_access":   c.JWT.AccessTTL.String(),
-		"jwt_refresh":  c.JWT.RefreshTTL.String(),
-		"log_level":    c.Log.Level,
-		"log_format":   c.Log.Format,
+		"config_file": c.source,
+
+		"app.name":     c.App.Name,
+		"app.env":      c.App.Env,
+		"app.timezone": c.App.Timezone,
+		"app.debug":    c.App.Debug,
+
+		"log.level":      c.Log.Level,
+		"log.format":     c.Log.Format,
+		"log.add_source": c.Log.AddSource,
+
+		"http.addr":                c.HTTP.Addr,
+		"http.read_header_timeout": off(c.HTTP.ReadHeaderTimeout),
+		"http.read_timeout":        off(c.HTTP.ReadTimeout),
+		"http.write_timeout":       off(c.HTTP.WriteTimeout),
+		"http.request_timeout":     off(c.HTTP.RequestTimeout),
+		"http.idle_timeout":        off(c.HTTP.IdleTimeout),
+		"http.shutdown_timeout":    off(c.HTTP.ShutdownTimeout),
+		"http.max_body_bytes":      c.HTTP.MaxBodyBytes,
+		"http.trusted_proxies":     list(c.HTTP.TrustedProxies),
+
+		"database.host":               c.Database.Host,
+		"database.port":               c.Database.Port,
+		"database.name":               c.Database.Name,
+		"database.user":               c.Database.User,
+		"database.sslmode":            c.Database.SSLMode,
+		"database.timezone":           text(c.Database.TimeZone),
+		"database.table_prefix":       text(c.Database.TablePrefix),
+		"database.max_open_conns":     c.Database.MaxOpenConns,
+		"database.max_idle_conns":     c.Database.MaxIdleConns,
+		"database.conn_max_lifetime":  off(c.Database.ConnMaxLifetime),
+		"database.conn_max_idle_time": off(c.Database.ConnMaxIdleTime),
+		"database.statement_timeout":  off(c.Database.StatementTimeout),
+		"database.connect_timeout":    off(c.Database.ConnectTimeout),
+		"database.slow_query":         off(c.Database.SlowQueryThreshold),
+		"database.log_level":          c.Database.LogLevel,
+
+		"redis.mode":             c.Redis.Mode,
+		"redis.addrs":            list(c.Redis.Addrs),
+		"redis.master_name":      text(c.Redis.MasterName),
+		"redis.db":               c.Redis.DB,
+		"redis.key_prefix":       c.Redis.KeyPrefix,
+		"redis.dial_timeout":     off(c.Redis.DialTimeout),
+		"redis.read_timeout":     off(c.Redis.ReadTimeout),
+		"redis.write_timeout":    off(c.Redis.WriteTimeout),
+		"redis.pool_size":        c.Redis.PoolSize,
+		"redis.route_by_latency": c.Redis.RouteByLatency,
+		"redis.route_randomly":   c.Redis.RouteRandomly,
+		"redis.tls_enabled":      c.Redis.TLSEnabled,
+
+		"jwt.issuer":      c.JWT.Issuer,
+		"jwt.audience":    c.JWT.Audience,
+		"jwt.access_ttl":  off(c.JWT.AccessTTL),
+		"jwt.refresh_ttl": off(c.JWT.RefreshTTL),
+
+		"security.bcrypt_cost":              c.Security.BcryptCost,
+		"security.password_min_length":      c.Security.PasswordMinLength,
+		"security.login_max_attempts":       c.Security.LoginMaxAttempts,
+		"security.login_window":             off(c.Security.LoginWindow),
+		"security.login_block_duration":     off(c.Security.LoginBlockDuration),
+		"security.operation_log_enabled":    c.Security.OperationLogEnabled,
+		"security.operation_log_body_limit": c.Security.OperationLogBodyLimit,
+
+		"cors.allowed_origins":   list(c.CORS.AllowedOrigins),
+		"cors.allow_credentials": c.CORS.AllowCredentials,
+		"cors.max_age":           off(c.CORS.MaxAge),
+
+		"bootstrap.admin_username":     text(c.Bootstrap.AdminUsername),
+		"bootstrap.password_generated": generated,
+
+		"secrets.from_files": list(files),
 	}
 }
 
