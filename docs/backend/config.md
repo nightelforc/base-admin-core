@@ -355,23 +355,25 @@ validator.New().Struct(c)
 | `Security.OperationLogBodyLimit` | `min=0,max=4096` | 允许关闭，最大与审计表列宽对齐 |
 | `App.Env` | 只允许 `development`、`test`、`production` | 防止拼错环境名导致生产校验失效 |
 
-tag 校验失败时直接返回，不会继续收集跨字段问题。错误形如：
+tag 校验不再"报一个就返回"：它与第二阶段的跨字段校验共用同一份 `problems`，最后合并成同一条错误。报错里的字段名是**环境变量名**——取自结构体的 `env` tag 再拼上组件前缀（`APP_`、`DB_`、`SECURITY_` 等），而不是 validator 默认的 `Config.JWT.Secret`，也不是 Go 字段名，因为前者才能直接拿去 grep 或改环境变量：
 
 ```text
-invalid configuration: Key: 'Config.JWT.Secret' Error:Field validation for 'Secret' failed on the 'required' tag
+invalid configuration:
+  - JWT_SECRET must be at least 32 characters
+  - LOG_LEVEL must be one of: debug, info, warn, error
 ```
+
+文案在 `config.go` 的 `describeSchemaField()` 里统一生成，覆盖本包实际用到的 `required`、`min`、`max`、`gte`、`lte`、`len`、`oneof`、`email`、`url`；新增 tag 时在那里补一条，未翻译的 tag 会走兜底文案（`<VAR> failed validation rule <tag>`）。
 
 ### 5.2 第二阶段：各组件跨字段校验
 
-tag 校验通过后，根 `Validate()` 按 `App`、`HTTP`、`Database`、`Redis`、`JWT`、`Security`、`CORS` 的顺序调用各自的 `validate()`。每个方法只返回 `problems`，不打印、不退出；根方法负责汇总，因此 **一次性列出全部错误**：
+根 `Validate()` 按 `App`、`HTTP`、`Database`、`Redis`、`JWT`、`Security`、`CORS` 的顺序调用各自的 `validate()`。每个方法只返回 `problems`，不打印、不退出；根方法负责汇总，因此 **一次性列出全部错误**：
 
 ```go
 // config.go：只保留编排
 func (c *Config) Validate() error {
-    if err := validator.New().Struct(c); err != nil {
-        return fmt.Errorf("invalid configuration: %w", err)
-    }
     var p problems
+    p.extend(c.validateSchema()) // 结构体 tag，逐组件执行并改写为环境变量名
     p.extend(c.App.validate())
     p.extend(c.HTTP.validate())
     // ...
@@ -384,7 +386,7 @@ func (c *Config) Validate() error {
 
 | 约束 | 失败示例 |
 | --- | --- |
-| 表前缀只允许 `^[a-z][a-z0-9_]*$` 或空 | `DB_TABLE_PREFIX "Base-" ...` |
+| 表前缀只允许 `^[a-z][a-z0-9_]*$` 或空 | `DB_TABLE_PREFIX "Base-" must be lowercase letters, digits and underscores, starting with a letter (or be empty)` |
 | Redis key 前缀不能为空 | `REDIS_KEY_PREFIX must not be empty` |
 | 应用时区、数据库时区必须能被 `time.LoadLocation` 加载 | `APP_TIMEZONE "Mars/Base" is not a known IANA time zone` |
 | JWT access/refresh 必须为正，且 refresh > access | `JWT_REFRESH_TTL must be greater than JWT_ACCESS_TTL` |
@@ -397,6 +399,8 @@ func (c *Config) Validate() error {
 | `HTTP_IDLE_TIMEOUT` 不能为负（0 合法，回退到 `ReadTimeout`） | `HTTP_IDLE_TIMEOUT must not be negative` |
 | `HTTP_REQUEST_TIMEOUT` 不能为负；启用时必须小于 `HTTP_WRITE_TIMEOUT` | `HTTP_REQUEST_TIMEOUT must be less than HTTP_WRITE_TIMEOUT` |
 | `CORS_MAX_AGE` 不能为负 | `CORS_MAX_AGE must not be negative` |
+| Redis 单机模式只接受一个地址 | `REDIS_ADDRS must contain exactly one address when REDIS_MODE=standalone, got 2` |
+| TLS 选项不能脱离开关单独出现 | `REDIS_TLS_* options require REDIS_TLS_ENABLED=true` |
 
 失败时错误体是：
 

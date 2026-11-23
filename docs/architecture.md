@@ -45,7 +45,7 @@ pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis
 `backend/config.yaml` 是全量配置的唯一声明处，也是默认值的唯一来源；`CONFIG_FILE` 可指定路径，未设置时依次查找
 `./config.yaml`、`./backend/config.yaml`。YAML 使用严格字段校验，拼错的键会直接启动失败。
 
-启动期还会做跨字段校验：
+启动期还会做跨字段校验，且 tag 校验与跨字段校验的错误会合并成一条（报错里用环境变量名，如 `LOG_LEVEL`，不是 Go 字段名）：
 
 - 生产环境（`APP_ENV=production`）额外拒绝：示例/默认密钥、`CORS_ALLOWED_ORIGINS=*` 同时开启凭证、`APP_DEBUG=true`。
 - `DB_TABLE_PREFIX` 只允许 `^[a-z][a-z0-9_]*$`（或空），避免拼接出非法表名。

@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -168,14 +169,12 @@ func (p problems) err() error {
 	return fmt.Errorf("invalid configuration:\n  - %s", strings.Join(p, "\n  - "))
 }
 
-// Validate 先执行结构体 tag 校验，再汇总各组件自己的跨字段校验，最后检查只在
-// 生产环境生效的部署策略。所有问题一次性返回，进程不会带病启动。
+// Validate 汇总三类问题：结构体 tag 上的 schema 校验、各组件自己的跨字段校验、
+// 只在生产环境生效的部署策略。全部一次性返回——配置错误应该一次看完，而不是
+// 改一个重启一次。顺序上 schema 在前，因为它是"值本身不合法"，通常要先修掉。
 func (c *Config) Validate() error {
-	if err := validator.New().Struct(c); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
-	}
-
 	var p problems
+	p.extend(c.validateSchema())
 	p.extend(c.App.validate())
 	p.extend(c.HTTP.validate())
 	p.extend(c.Database.validate())
@@ -186,6 +185,105 @@ func (c *Config) Validate() error {
 	p.extend(c.validateTimeouts())
 	p.extend(c.validateProduction())
 	return p.err()
+}
+
+// componentSchema 把组件值和它的环境变量前缀绑在一起。前缀只有这里知道：
+// validator 报错用的是 Go 字段名（Database.MaxOpenConns），而用户实际设置的是
+// DB_MAX_OPEN_CONNS，报错必须指回后者才可操作。
+type componentSchema struct {
+	prefix string
+	value  any
+}
+
+// validateSchema 逐个组件执行 tag 校验。validator 一次只接收一个值，所以循环在
+// 这里；返回值与其它校验共用 problems，最终合并成同一条错误。
+func (c *Config) validateSchema() problems {
+	var p problems
+
+	for _, component := range []componentSchema{
+		{"APP_", c.App},
+		{"HTTP_", c.HTTP},
+		{"LOG_", c.Log},
+		{"DB_", c.Database},
+		{"REDIS_", c.Redis},
+		{"JWT_", c.JWT},
+		{"SECURITY_", c.Security},
+		{"CORS_", c.CORS},
+		{"BOOTSTRAP_", c.Bootstrap},
+	} {
+		p.extend(describeSchemaProblems(component.prefix, component.value))
+	}
+	return p
+}
+
+// describeSchemaProblems 把 validator 的英文报错改写成"环境变量名 + 英文原因"。
+// 变量名取自结构体的 env tag（与 caarlos0/env 的取名规则一致），不是 Go 字段名，
+// 也不是 validator 自带的 `Config.Log.Level` 这种命名空间——后两种都没法直接
+// 拿去搜环境变量。
+func describeSchemaProblems(prefix string, value any) problems {
+	var p problems
+
+	err := validator.New().Struct(value)
+	if err == nil {
+		return p
+	}
+
+	var invalid validator.ValidationErrors
+	if !errors.As(err, &invalid) {
+		// 不是字段级错误（例如嵌套结构体解析失败），原样带上即可。
+		p.add(err.Error())
+		return p
+	}
+
+	typ := reflect.TypeOf(value)
+	for _, fieldErr := range invalid {
+		name := fieldErr.StructField()
+		if field, ok := typ.FieldByName(fieldErr.StructField()); ok {
+			if tagged := strings.TrimSpace(field.Tag.Get("env")); tagged != "" {
+				name = tagged
+			}
+		}
+		p.add(describeSchemaField(prefix+name, fieldErr))
+	}
+	return p
+}
+
+// describeSchemaField 覆盖本包实际用到的 tag。新增 tag 时在这里补一条，default
+// 分支只作为兜底——把 validator 的原始英文原文直接抛给用户是最不希望发生的情况。
+func describeSchemaField(name string, fieldErr validator.FieldError) string {
+	param := fieldErr.Param()
+
+	switch fieldErr.Tag() {
+	case "required":
+		return name + " is required"
+	case "min":
+		if fieldErr.Kind() == reflect.String {
+			return fmt.Sprintf("%s must be at least %s characters", name, param)
+		}
+		return fmt.Sprintf("%s must be at least %s", name, param)
+	case "max":
+		if fieldErr.Kind() == reflect.String {
+			return fmt.Sprintf("%s must be at most %s characters", name, param)
+		}
+		return fmt.Sprintf("%s must be at most %s", name, param)
+	case "gte":
+		return fmt.Sprintf("%s must be at least %s", name, param)
+	case "lte":
+		return fmt.Sprintf("%s must be at most %s", name, param)
+	case "len":
+		return fmt.Sprintf("%s must be exactly %s characters", name, param)
+	case "oneof":
+		return fmt.Sprintf("%s must be one of: %s", name, strings.ReplaceAll(param, " ", ", "))
+	case "email":
+		return name + " must be a valid email address"
+	case "url":
+		return name + " must be a valid URL"
+	default:
+		if param == "" {
+			return fmt.Sprintf("%s failed validation rule %s", name, fieldErr.Tag())
+		}
+		return fmt.Sprintf("%s failed validation rule %s(%s)", name, fieldErr.Tag(), param)
+	}
 }
 
 // validateTimeouts 保证数据库侧的等待都早于请求超时。反过来的话，请求早已返回

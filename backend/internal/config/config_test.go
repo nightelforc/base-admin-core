@@ -436,7 +436,7 @@ redis:
 	t.Setenv(ConfigFileEnv, path)
 	t.Setenv("JWT_SECRET", strings.Repeat("a", 32))
 
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "Mode") {
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "REDIS_MODE") {
 		t.Fatalf("Load error = %v, want mode validation error", err)
 	}
 }
