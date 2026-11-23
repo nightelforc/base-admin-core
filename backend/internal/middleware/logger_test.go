@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -107,6 +108,60 @@ func TestAccessLogScopesProbesWithoutAccessLine(t *testing.T) {
 	}
 	if record["request_id"] != "req-123" {
 		t.Errorf("request_id = %v, want %q", record["request_id"], "req-123")
+	}
+}
+
+func TestAccessLogLogsQueryKeysWithoutValues(t *testing.T) {
+	engine, buf := newLoggingTestEngine(t)
+	engine.GET("/users", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, requestWithID(http.MethodGet, "/users?keyword=13800138000&page=2", "req-123"))
+
+	line := logLines(t, buf)[0]
+	if strings.Contains(line, "13800138000") {
+		t.Fatalf("access line leaks the keyword value: %s", line)
+	}
+	if strings.Contains(line, `"query":`) {
+		t.Fatalf("access line still carries the raw query string: %s", line)
+	}
+	record := decodeLine(t, line)
+	if record["query_keys"] != "keyword,page" {
+		t.Errorf("query_keys = %v, want %q", record["query_keys"], "keyword,page")
+	}
+}
+
+func TestQueryKeys(t *testing.T) {
+	longKey := strings.Repeat("k", queryKeyBytesLimit+8)
+	manyKeys := []string{"k09", "k08", "k07", "k06", "k05", "k04", "k03", "k02", "k01", "k00"}
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "no query", raw: "", want: ""},
+		{name: "keeps order stable", raw: "pageSize=20&page=1", want: "page,pageSize"},
+		{name: "deduplicates repeated keys", raw: "page=1&page=2&page=3", want: "page"},
+		{name: "drops empty key", raw: "=x&page=1", want: "page"},
+		{name: "drops values", raw: "keyword=someone@example.com", want: "keyword"},
+		{name: "truncates long key", raw: longKey + "=1", want: longKey[:queryKeyBytesLimit]},
+		{name: "caps the number of keys", raw: strings.Join(manyKeys, "&"), want: "k00,k01,k02,k03,k04,k05,k06,k07"},
+		{name: "ignores unparsable query", raw: "%%%", want: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := queryKeys(tc.raw)
+			if got != tc.want {
+				t.Fatalf("queryKeys(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("queryKeys(%q) produced invalid UTF-8: %q", tc.raw, got)
+			}
+		})
 	}
 }
 
