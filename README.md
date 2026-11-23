@@ -28,10 +28,10 @@
 base-admin-core/
 ├── backend/                     Go 服务
 │   ├── cmd/
-│   │   ├── server/              启动 HTTP 服务（自动执行迁移）
-│   │   └── migrate/             只执行数据库迁移
+│   │   ├── server/              启动 HTTP 服务（不执行迁移）
+│   │   └── migrate/             执行迁移与首个管理员初始化（Job 入口）
 │   ├── internal/                 应用私有代码（Go 编译期禁止外部 import）
-│   │   ├── bootstrap/           启动时初始化超级管理员
+│   │   ├── bootstrap/           首个管理员初始化（由 migrate Job 调用）
 │   │   ├── config/              config.yaml 加载、环境变量覆盖与启动校验
 │   │   ├── handler/             HTTP 处理器（参数绑定 + 调用 service）
 │   │   ├── middleware/          请求 ID / 访问日志 / 恢复 / CORS / 认证 / 鉴权 / 操作日志
@@ -69,14 +69,11 @@ base-admin-core/
 ```bash
 cd backend
 cp .env.example .env      # 可选：覆盖数据库口令、Redis 口令、JWT_SECRET 等
-go run ./cmd/migrate      # 建表 + 初始化角色/菜单（可重复执行）
-go run ./cmd/server       # 默认监听 :8080
+go run ./cmd/migrate      # 建表 + 初始化角色/菜单 + 首个管理员（可重复执行）
+go run ./cmd/server       # 默认监听 :8080，不再执行迁移
 ```
 
-启动时会自动执行未应用的迁移（`DB_MIGRATE=true`），并按 `BOOTSTRAP_ADMIN_*` 创建超级管理员。
-若 `BOOTSTRAP_ADMIN_PASSWORD` 留空，则生成随机密码并在首次启动日志中打印一次。
-
-初始管理员用户名由 `BOOTSTRAP_ADMIN_USERNAME` 决定；密码取 `BOOTSTRAP_ADMIN_PASSWORD`，留空时会在首次启动日志中打印一次。
+`cmd/migrate` 是给集群 Job 用的独立入口：迁移持 advisory lock、按 checksum 校验，bootstrap 幂等。若 `BOOTSTRAP_ADMIN_PASSWORD` 留空，会生成随机密码并在 Job 日志中打印一次；生产建议在 Secret 中显式设置。初始管理员用户名由 `BOOTSTRAP_ADMIN_USERNAME` 决定。
 
 ### 2. 前端
 

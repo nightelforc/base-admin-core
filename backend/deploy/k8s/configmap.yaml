@@ -46,10 +46,12 @@ data:
   # ---- 可选覆盖 ----
   # Ingress/负载均衡后面填写代理网段；留空表示不信任任何代理。
   # HTTP_TRUSTED_PROXIES: "${HTTP_TRUSTED_PROXIES}"
-  # 多副本建议 false，并用 Job 执行迁移。
-  # DB_MIGRATE: "${DB_MIGRATE}"
+  # 连接池是单进程上限；多副本按 (峰值副本+滚动余量)×max_open + 1 ≤ max_connections-reserved 规划。
+  # 默认 15/5 已按 3 副本 + 滚动更新 + PostgreSQL 默认 100 连接估算，副本更多时调小。
+  # DB_MAX_OPEN_CONNS: "15"
+  # DB_MAX_IDLE_CONNS: "5"
   # 哨兵模式：
   # REDIS_MODE: "${REDIS_MODE}"
   # REDIS_MASTER_NAME: "${REDIS_MASTER_NAME}"
-  # 首次管理员邮箱：
+  # 首次管理员邮箱（迁移 Job 使用）：
   # BOOTSTRAP_ADMIN_EMAIL: "${BOOTSTRAP_ADMIN_EMAIL}"

@@ -37,9 +37,6 @@ type Database struct {
 	// 提前放弃，服务端语句仍会继续跑；这个参数才是数据库侧的止损点。0 表示不设置。
 	// 该值不含迁移：迁移走 DSN()，因为大表的 DDL 合法地超过应用查询的时限。
 	StatementTimeout time.Duration `env:"STATEMENT_TIMEOUT" yaml:"statement_timeout"`
-
-	// Migrate 控制启动时是否执行内嵌的 SQL 迁移。
-	Migrate bool `env:"MIGRATE" yaml:"migrate"`
 }
 
 // validate 校验表前缀、连接时区与连接池容量之间的约束。

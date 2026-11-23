@@ -70,10 +70,42 @@ func Open(ctx context.Context, opts Options) (*gorm.DB, error) {
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := sqlDB.PingContext(pingCtx); err != nil {
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
+	logConnectionCapacity(pingCtx, sqlDB, log, opts)
+
 	return gormDB, nil
+}
+
+// logConnectionCapacity 记录单进程连接池与服务器上限，便于按副本数规划容量。
+// 它只读取当前会话可见的 GUC，不改变任何服务器设置。
+func logConnectionCapacity(ctx context.Context, sqlDB *sql.DB, log *slog.Logger, opts Options) {
+	var serverMax, reserved int
+	err := sqlDB.QueryRowContext(ctx,
+		"SELECT current_setting('max_connections')::int, "+
+			"current_setting('superuser_reserved_connections')::int",
+	).Scan(&serverMax, &reserved)
+	if err != nil {
+		log.Debug("read postgres connection limits", "error", err)
+		return
+	}
+
+	available := serverMax - reserved
+	log.Info("postgres pool",
+		"max_open", opts.MaxOpenConns,
+		"max_idle", opts.MaxIdleConns,
+		"server_max_connections", serverMax,
+		"server_reserved", reserved,
+		"server_available", available,
+	)
+	if opts.MaxOpenConns > available {
+		log.Warn("postgres pool alone can exhaust server connections",
+			"max_open", opts.MaxOpenConns,
+			"server_available", available,
+		)
+	}
 }
 
 // Close 释放连接池。

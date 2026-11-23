@@ -29,11 +29,13 @@ cmd/server/main.go
   ├─ logger.New(...)                         日志等级、格式、调用位置
   ├─ postgres.Open(ctx, cfg.Database.Options())
   ├─ redis.Open(ctx, cfg.Redis.Options())
-  ├─ migrate.Run(ctx, ...)                   DB_MIGRATE 控制是否执行
   ├─ build(cfg, ...)                         service / handler 装配
   ├─ server.NewRouter(...)                   CORS、BodyLimit、鉴权、审计
   └─ server.New(...).Run(ctx)                监听、超时、优雅退出
 ```
+
+迁移与首个管理员不在 server 的启动链里：它们由 `cmd/migrate`（集群中的 Job）在服务启动前完成，
+应用进程启动时不再执行任何 DDL，也不额外占用数据库连接。
 
 `config.Load()` 的返回值是 `*config.Config`；加载成功后，启动日志会输出一份脱敏摘要：
 
@@ -237,7 +239,7 @@ http:
   request_timeout: 30s
 
 database:
-  max_open_conns: 25
+  max_open_conns: 15
 ```
 
 **环境变量名**由“组件前缀 + 字段上的 `env` 标签”组成：
@@ -380,8 +382,8 @@ invalid configuration:
 | `cmd/server` | `config.Load()`、`cfg.Summary()` | 加载配置并输出脱敏摘要 |
 | `pkg/postgres` | `cfg.Database.Options()` | 连接地址、账号、SSL、连接池、慢查询阈值 |
 | `pkg/redis` | `cfg.Redis.Options()` | 地址、账号、DB、超时、连接池、TLS 证书材料 |
-| `cmd/migrate` | `config.Load()` | 迁移命令使用与 server 相同的配置 |
-| `build()` | `cfg.Security`、`cfg.JWT`、`cfg.Bootstrap` | 密码策略、令牌签发、初始管理员 |
+| `cmd/migrate` | `config.Load()`、`cfg.Database`、`cfg.Bootstrap` | Job 中执行迁移并创建首个管理员，使用与应用相同的配置 |
+| `build()` | `cfg.Security`、`cfg.JWT` | 密码策略、令牌签发 |
 | `server.NewRouter` | `cfg.CORS`、`cfg.HTTP.MaxBodyBytes`、`cfg.HTTP.TrustedProxies` | 跨域、请求体上限、可信代理 |
 | `server.New` | `cfg.HTTP` | 监听地址、传输层超时、请求超时、优雅退出 |
 | 审计中间件 | `cfg.Security.OperationLogEnabled`、`cfg.Security.OperationLogBodyLimit` | 是否记录、请求体快照上限 |
@@ -439,6 +441,28 @@ http.Server
 也就是说，普通 JSON 请求体远小于 2 KB，审计快照足够定位问题；超大 base64 请求体不会因为审计上限而被拒绝，真正的保护由 `HTTP_MAX_BODY_BYTES` 负责。
 
 `OperationLogBodyLimit=0` 表示审计日志不记录请求体，只记录方法、路径、状态码、耗时等元数据。上限设为 4096，是为了与审计表 `request_body` 列宽对齐；超过上限的内容不会完整落库。
+
+### 6.4 连接池容量与多副本
+
+`max_open_conns` 限制的是**单个进程**，PostgreSQL 的 `max_connections` 限制的是**整个实例**；副本数会把前者放大成后者。规划时按最坏情况算：
+
+```text
+(峰值副本数 + 滚动/蓝绿余量) × max_open_conns + 1(迁移 Job) + 运维连接
+    ≤ max_connections − superuser_reserved_connections
+```
+
+PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，普通用户可用约 97 条。以默认 `max_open_conns=15` 为例：
+
+| 副本数 | 稳态（idle=5） | 峰值（open=15） | 滚动更新（+1 副本） |
+| --- | --- | --- | --- |
+| 1 | 5 | 15 | 30 |
+| 3 | 15 | 45 | 60 |
+| 6 | 30 | 90 | 105（超出） |
+
+- 副本越多，单副本的 `max_open_conns` 应越小；也可以在数据库前加 PgBouncer。注意 transaction 模式的 PgBouncer 与 pgx 的 `cache_statement`、会话级 `statement_timeout` 不兼容，需要相应调整。
+- 迁移与 bootstrap 由 Job 执行：Job 期间 1 条连接，运行期为 0；连接账本里仍要给它留 1 条。
+- `pkg/postgres.Open` 启动时输出 `postgres pool` 日志，包含 `max_open`、`max_idle` 与服务器的 `max_connections`、`superuser_reserved_connections`；单池就超过服务器可用连接时输出 warning。
+- 生产环境建议在 ConfigMap/Secret 中显式设置 `DB_MAX_OPEN_CONNS`（以及需要时的 `DB_MAX_IDLE_CONNS`），不要依赖模板默认值。
 
 ## 7. 常见问题
 

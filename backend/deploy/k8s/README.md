@@ -44,7 +44,7 @@
 | `DB_TABLE_PREFIX` | 多部署共用数据库时区分表前缀 |
 | `REDIS_KEY_PREFIX` | 多部署共用 Redis 时区分 key 前缀 |
 | `HTTP_TRUSTED_PROXIES` | Ingress / Pod 网段 |
-| `DB_MIGRATE` | 多副本时设 `false`，迁移交给 Job |
+| `DB_MAX_OPEN_CONNS` / `DB_MAX_IDLE_CONNS` | 多副本时按副本数收紧单进程连接池（默认 15/5） |
 | `CORS_ALLOW_CREDENTIALS` | 使用 Cookie 时设 `true`，且 Origin 必须明确 |
 | `REDIS_MODE` / `REDIS_MASTER_NAME` | 哨兵模式 |
 | `BOOTSTRAP_ADMIN_EMAIL` | 首次管理员邮箱 |
@@ -75,7 +75,7 @@ kubectl -n base-admin create secret generic base-admin-backend-secret \
   --dry-run=client -o yaml > /tmp/secret.yaml
 ```
 
-首次管理员创建完成后，可以移除 `BOOTSTRAP_ADMIN_PASSWORD`；留空时进程会随机生成密码，并在启动日志中打印一次。
+首次管理员创建完成后，可以移除 `BOOTSTRAP_ADMIN_PASSWORD`；留空时 Job 会随机生成密码，并在本次 Job 日志中打印一次。
 
 ## 4. 应用
 
@@ -99,7 +99,36 @@ envsubst < backend/deploy/k8s/configmap.yaml | kubectl -n base-admin apply -f -
 
 `envsubst` 会把未定义的变量替换为空字符串，执行前确认变量都已导出。
 
-## 5. 在 Deployment 中注入
+## 5. 迁移 Job（部署前执行）
+
+迁移与首个管理员由 `backend/cmd/migrate` 的二进制在 Job 中完成，必须在 Deployment 滚动前成功退出：
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: base-admin-migrate
+  namespace: base-admin
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: base-admin-core/backend:latest   # 与 Deployment 使用同一镜像
+          command: ["/app/migrate"]               # 按镜像内实际路径调整
+          envFrom:
+            - configMapRef:
+                name: base-admin-backend-config
+            - secretRef:
+                name: base-admin-backend-secret
+```
+
+流水线顺序：apply Job → `kubectl -n base-admin wait --for=condition=complete --timeout=600s job/base-admin-migrate` → 再滚动 Deployment。Job 期间只占 1 条数据库连接，运行期为 0；迁移持 advisory lock，重复执行安全。
+
+## 6. 在 Deployment 中注入
 
 ```yaml
 spec:
@@ -115,9 +144,10 @@ spec:
 
 `envFrom` 的 key 必须与环境变量名完全一致；清单已按 `APP_*`、`DB_*`、`REDIS_*` 等实际名称编写。列表字段（如 `CORS_ALLOWED_ORIGINS`、`HTTP_TRUSTED_PROXIES`）用逗号分隔。
 
-## 6. 运维注意
+## 7. 运维注意
 
 - 只有 `APP_ENV=production` 才会启用 `validateProduction` 的额外检查；漏设会跳过占位密钥、通配 CORS + 凭证等规则。
 - ConfigMap/Secret 不会热更新；修改后执行 `kubectl -n base-admin rollout restart deployment/<name>`。
-- 多副本同时启动可能并发执行迁移和首次管理员创建。生产建议用 Job 执行迁移与 bootstrap，普通副本设置 `DB_MIGRATE: "false"`。
+- 迁移与 bootstrap 只由第 5 节的 Job 执行；普通副本不再读取 `DB_MIGRATE`，启动时也不会执行 DDL。Job 未完成时不要滚动 Deployment。
+- 多副本按 `(峰值副本 + 滚动余量) × DB_MAX_OPEN_CONNS + 1 ≤ max_connections − superuser_reserved_connections` 规划连接；单副本默认 15，副本越多单副本上限应越小。
 - 镜像内没有 `config.yaml` 时，需挂载配置文件并设置 `CONFIG_FILE`，否则启动报 `config file not found`。

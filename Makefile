@@ -25,12 +25,13 @@ backend-run: ## 启动后端服务（读取 backend/.env）
 	cd $(BACKEND_DIR) && go run ./cmd/server
 
 .PHONY: backend-migrate
-backend-migrate: ## 执行数据库迁移
+backend-migrate: ## 执行数据库迁移与首个管理员初始化（Job 中调用）
 	cd $(BACKEND_DIR) && go run ./cmd/migrate
 
 .PHONY: backend-build
-backend-build: ## 编译后端二进制到 backend/bin
+backend-build: ## 编译后端二进制到 backend/bin（server + migrate Job）
 	cd $(BACKEND_DIR) && go build -trimpath -ldflags "-s -w" -o bin/server ./cmd/server
+	cd $(BACKEND_DIR) && go build -trimpath -ldflags "-s -w" -o bin/migrate ./cmd/migrate
 
 .PHONY: backend-test
 backend-test: ## 运行后端单元测试

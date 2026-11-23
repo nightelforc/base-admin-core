@@ -62,12 +62,15 @@ ReadWritePaths=/opt/base-admin
 WantedBy=multi-user.target
 ```
 
-数据库迁移可显式执行（推荐在发布流水线中单独一步）：
+数据库迁移与首个管理员由独立命令完成，发布流水线在服务启动前执行：
 
 ```bash
 set -a; . /etc/base-admin/base-admin.env; set +a
-CONFIG_FILE=/etc/base-admin/config.yaml /usr/local/bin/base-admin-migrate  # 或直接用 server 的 DB_MIGRATE=true
+CONFIG_FILE=/etc/base-admin/config.yaml /usr/local/bin/base-admin-migrate
 ```
+
+命令可重复执行（迁移有 checksum 与 advisory lock，bootstrap 幂等）；多副本部署时只运行一次。
+应用进程不再执行迁移，`DB_MIGRATE` 已移除。
 
 ## 3. Nginx 反向代理
 
@@ -155,8 +158,10 @@ Kubernetes 清单见 [`backend/deploy/k8s/configmap.yaml`](../backend/deploy/k8s
 
 1. 新增迁移文件 `backend/migrations/000N_xxx.sql`，使用 `{{prefix}}` 占位符；**不要修改已应用的旧文件**（checksum 校验会拒绝）。
 2. 发布前先备份数据库（见下）。
-3. 部署新二进制 → 执行迁移（`DB_MIGRATE=true` 自动执行，或单独跑 migrate 命令）→ 重启服务。
+3. 部署新二进制 → 运行 migrate Job（迁移 + 引导管理员）→ 重启服务。
 4. 回滚时使用旧二进制；若新迁移做了不兼容变更，按迁移文件中的注释手工回滚（建议采用"先加列/后删列"的兼容式演进）。
+
+> 升级注意：本版本移除了 `database.migrate` / `DB_MIGRATE`。配置使用严格解析，升级前请删除 `config.yaml` 中的 `database.migrate` 键，并移除部署清单里的 `DB_MIGRATE` 环境变量；否则会因未知字段拒绝启动。
 
 备份示例：
 

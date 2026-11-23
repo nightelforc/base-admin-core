@@ -237,7 +237,6 @@ func (c *Config) Summary() map[string]any {
 		"db_user":      c.Database.User,
 		"db_ssl":       c.Database.SSLMode,
 		"table_prefix": c.Database.TablePrefix,
-		"migrate":      c.Database.Migrate,
 		"redis_mode":   c.Redis.Mode,
 		"redis_addrs":  strings.Join(c.Redis.Addrs, ","),
 		"redis_master": c.Redis.MasterName,

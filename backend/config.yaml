@@ -64,14 +64,15 @@ database:
   sslmode: disable                    # L2 disable | allow | prefer | require | verify-ca | verify-full
   timezone: Asia/Shanghai             # L2 连接会话时区
   table_prefix: base_                 # L2 表前缀，多个部署共库时必须唯一
-  max_open_conns: 25                  # L2
-  max_idle_conns: 10                  # L2
+  # 单进程上限；多副本时全实例总量 = 副本数 × max_open_conns，须给迁移 Job 与运维连接留余量。
+  # 默认 15 按 3 副本 + 滚动更新 + PostgreSQL 默认 max_connections=100 估算，可按副本数调整。
+  max_open_conns: 15                  # L2
+  max_idle_conns: 5                   # L2
   conn_max_lifetime: 30m              # L2
   conn_max_idle_time: 5m              # L2
   slow_query_threshold: 200ms         # L2 慢查询日志阈值
   statement_timeout: 5s               # L2 单条 SQL 上限；必须短于 http.request_timeout，0 表示不设置
   log_level: warn                     # L2 silent | error | warn | info
-  migrate: true                       # L2 启动时执行内嵌迁移
 
 redis:
   mode: standalone                    # L2 standalone | sentinel（集群模式未实现）
