@@ -1,6 +1,8 @@
 # base-admin-core
 
-基于 **Vben Admin 5 (Vue 3 + Naive UI)** 与 **Gin + GORM** 的后台管理模板。
+**Gin + GORM** 的可复用后端服务基座，配 **Vben Admin 5 (Vue 3 + Naive UI)** 前端模板。
+
+`backend/` 不绑定“管理后台”这一种形态：认证与会话、RBAC、审计、配置装载、日志、PostgreSQL/Redis 接入、超时与优雅退出都是通用能力，分层约定（handler → service → repository → pkg）对管理后台和对外服务同样适用。当前用管理后台的业务来驱动这些基础能力落地——它既是可用的后台，也是继续往上长业务之前的底座。`frontend/` 目前只覆盖管理后台一侧，作为基座的参考实现。
 
 - 前端：[vue-vben-admin](https://github.com/vbenjs/vue-vben-admin) v5.7.0（`apps/web-naive` 精简为单应用 `frontend/apps/web`），UI 组件库为 Naive UI。
 - 后端：Gin + GORM，PostgreSQL 18，Redis 7，JWT（access + refresh）+ Redis 会话，RBAC 权限，审计日志。

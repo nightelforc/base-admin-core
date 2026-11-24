@@ -146,7 +146,7 @@ Kubernetes 清单见 [`backend/deploy/k8s/configmap.yaml`](../backend/deploy/k8s
 
 ## 5. 与其它系统共用数据库
 
-本模板支持多个部署共用一个 schema：
+本服务支持多个部署共用一个 schema：
 
 - 所有表名都带 `DB_TABLE_PREFIX`，建表、查询、原生 SQL 全部走同一前缀；
 - 迁移记录表为 `<prefix>schema_migrations`，不会与别的系统的迁移表冲突；

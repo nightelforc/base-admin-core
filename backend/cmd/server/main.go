@@ -1,4 +1,7 @@
-// Command server 启动管理后台 API 服务。
+// Command server 启动 HTTP API 服务。
+//
+// 当前装配的管理后台只是这个基座的一种形态：认证、RBAC、审计、配置与日志等能力
+// 都来自 pkg 与 internal 的通用层，换成对外服务时复用同一套分层即可。
 package main
 
 import (
