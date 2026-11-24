@@ -3,28 +3,31 @@ package monitor
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/nightelforc/base-admin-core/backend/internal/monitor/core"
 )
 
 func TestChecksWithoutDependencies(t *testing.T) {
-	items, err := checks(Deps{})
-	if err != nil {
-		t.Fatalf("checks(Deps{}) failed: %v", err)
-	}
+	items, failures := checks(sources, Deps{})
 	if len(items) != 0 {
-		t.Fatalf("checks(Deps{}) returned %d checks, want 0", len(items))
+		t.Fatalf("checks(sources, Deps{}) returned %d checks, want 0", len(items))
+	}
+	if len(failures) != 0 {
+		t.Fatalf("checks(sources, Deps{}) reported %d failures, want 0", len(failures))
 	}
 }
 
 func TestChecksIncludesPoolWhenDatabasePresent(t *testing.T) {
 	db := &gorm.DB{Config: &gorm.Config{ConnPool: &sql.DB{}}}
 
-	items, err := checks(Deps{DB: db})
-	if err != nil {
-		t.Fatalf("checks failed: %v", err)
+	items, failures := checks(sources, Deps{DB: db})
+	if len(failures) != 0 {
+		t.Fatalf("unexpected failures: %v", failures)
 	}
 	if len(items) != 1 {
 		t.Fatalf("checks returned %d checks, want 1", len(items))
@@ -35,11 +38,42 @@ func TestChecksIncludesPoolWhenDatabasePresent(t *testing.T) {
 }
 
 func TestChecksReportsUnusableDatabaseHandle(t *testing.T) {
-	// 连接池不是 *sql.DB 时 gorm 会报错，Run 据此降级为不监控。
-	db := &gorm.DB{Config: &gorm.Config{}}
+	// 连接池不是 *sql.DB 时 gorm 会报错：这一路不注册，Run 据此降级。
+	items, failures := checks(sources, Deps{DB: &gorm.DB{Config: &gorm.Config{}}})
 
-	if _, err := checks(Deps{DB: db}); err == nil {
-		t.Fatal("expected an error for a connection pool that is not *sql.DB")
+	if len(items) != 0 {
+		t.Fatalf("checks returned %d checks, want 0", len(items))
+	}
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want exactly one", failures)
+	}
+	if failures[0].source != "postgres" || failures[0].err == nil {
+		t.Fatalf("failure = %+v, want postgres with an error", failures[0])
+	}
+}
+
+func TestChecksKeepsGoingAfterASourceFailure(t *testing.T) {
+	broken := source{
+		name: "broken",
+		build: func(Deps) ([]core.Check, error) {
+			return nil, errors.New("no handle")
+		},
+	}
+	healthy := source{
+		name: "healthy",
+		build: func(Deps) ([]core.Check, error) {
+			return []core.Check{core.NewPoll("fake", 0, func(context.Context) (int, error) {
+				return 0, nil
+			})}, nil
+		},
+	}
+
+	items, failures := checks([]source{broken, healthy}, Deps{})
+	if len(items) != 1 {
+		t.Fatalf("checks returned %d checks, want the healthy source to survive", len(items))
+	}
+	if len(failures) != 1 || failures[0].source != "broken" {
+		t.Fatalf("failures = %+v, want only the broken source", failures)
 	}
 }
 
