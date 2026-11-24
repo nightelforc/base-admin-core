@@ -19,6 +19,7 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/internal/config"
 	"github.com/nightelforc/base-admin-core/backend/internal/handler"
 	"github.com/nightelforc/base-admin-core/backend/internal/middleware"
+	"github.com/nightelforc/base-admin-core/backend/internal/monitor"
 	"github.com/nightelforc/base-admin-core/backend/internal/repository"
 	"github.com/nightelforc/base-admin-core/backend/internal/server"
 	"github.com/nightelforc/base-admin-core/backend/internal/service"
@@ -91,6 +92,13 @@ func run() error {
 			log.Error("close postgres", "error", closeErr)
 		}
 	}()
+
+	// 4.1 监控：开关在配置里；开哪些检查、怎么取依赖都由 monitor 自己完成。
+	if cfg.Monitor.Enabled {
+		monitor.Run(ctx, log, monitor.Deps{DB: db})
+	} else {
+		log.Info("monitor disabled by config")
+	}
 
 	// 5. Redis：会话与登录限流都从这里取，所以只建一个客户端、一个连接池。
 	rdb, err := redis.Open(ctx, cfg.Redis.Options())

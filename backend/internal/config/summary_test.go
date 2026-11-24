@@ -29,6 +29,7 @@ func TestSummaryCoversEveryComponent(t *testing.T) {
 		"config_file",
 		"app.name", "app.env", "app.timezone", "app.debug",
 		"log.level", "log.format", "log.add_source",
+		"monitor.enabled",
 		"http.addr", "http.read_header_timeout", "http.request_timeout",
 		"http.idle_timeout", "http.shutdown_timeout", "http.max_body_bytes",
 		"http.trusted_proxies",

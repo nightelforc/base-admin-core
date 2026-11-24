@@ -3,7 +3,7 @@
 // config.yaml 是全量配置的唯一声明处，也是默认值的唯一来源；代码不再用
 // envDefault 兜底。配置文件按重要性分为三层：
 //
-//	L1 基础运行  APP_* / LOG_* / HTTP_* / BOOTSTRAP_*
+//	L1 基础运行  APP_* / LOG_* / MONITOR_* / HTTP_* / BOOTSTRAP_*
 //	L2 基础设施  DB_* / REDIS_* / CORS_*
 //	L3 安全敏感  JWT_* / SECURITY_*，以及 DB_PASSWORD、REDIS_PASSWORD 等口令
 //
@@ -53,6 +53,7 @@ type Config struct {
 	App       App       `envPrefix:"APP_" yaml:"app"`
 	HTTP      HTTP      `envPrefix:"HTTP_" yaml:"http"`
 	Log       Log       `envPrefix:"LOG_" yaml:"log"`
+	Monitor   Monitor   `envPrefix:"MONITOR_" yaml:"monitor"`
 	Database  Database  `envPrefix:"DB_" yaml:"database"`
 	Redis     Redis     `envPrefix:"REDIS_" yaml:"redis"`
 	JWT       JWT       `envPrefix:"JWT_" yaml:"jwt"`
@@ -204,6 +205,7 @@ func (c *Config) validateSchema() problems {
 		{"APP_", c.App},
 		{"HTTP_", c.HTTP},
 		{"LOG_", c.Log},
+		{"MONITOR_", c.Monitor},
 		{"DB_", c.Database},
 		{"REDIS_", c.Redis},
 		{"JWT_", c.JWT},
@@ -406,6 +408,8 @@ func (c *Config) Summary() map[string]any {
 		"log.level":      c.Log.Level,
 		"log.format":     c.Log.Format,
 		"log.add_source": c.Log.AddSource,
+
+		"monitor.enabled": c.Monitor.Enabled,
 
 		"http.addr":                c.HTTP.Addr,
 		"http.read_header_timeout": off(c.HTTP.ReadHeaderTimeout),

@@ -15,7 +15,7 @@
 # ./backend/config.yaml。
 #
 # 分级：
-#   L1 基础运行：应用标识、日志、HTTP 监听与超时、首次启动引导
+#   L1 基础运行：应用标识、日志、监控开关、HTTP 监听与超时、首次启动引导
 #   L2 基础设施：PostgreSQL、Redis、CORS
 #   L3 安全敏感：JWT、密码策略、登录限流、审计，以及数据库/Redis 口令
 
@@ -33,6 +33,9 @@ log:
   level: info                         # L1 debug | info | warn | error
   format: text                        # L1 text | json（生产建议 json）
   add_source: false                   # L1 是否输出调用文件与行号
+
+monitor:
+  enabled: true                       # L1 是否启用内置监控；关闭后不创建任何监控协程
 
 http:
   addr: ":8080"                       # L1 监听地址
