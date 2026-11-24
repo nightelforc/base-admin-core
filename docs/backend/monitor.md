@@ -1,0 +1,214 @@
+# 监控模块（monitor）
+
+> 适用范围：`backend/internal/monitor/`。
+>
+> 代码入口：`backend/internal/monitor/monitor.go`；契约与调度：`backend/internal/monitor/core/`；具体监控项：`backend/internal/monitor/pg/`。
+>
+> 本文说明监控模块的定位、概念、调度语义、失败处理和扩展方式。日志字段的完整清单以代码里的 `Result` 构造为准。
+
+## 1. 定位
+
+监控模块回答一个问题：**「进程此刻依赖的那些组件，是否健康」**。它在后台按固定节拍采样，只在需要关注时输出一行结构化日志，不产生数据库往返、不阻塞请求路径、也不作为启动的前置条件。
+
+它刻意的边界：
+
+| 做 | 不做 |
+| --- | --- |
+| 定期采样进程内计数（连接池等） | 不做请求级埋点、不做链路追踪 |
+| 用策略链把快照判成「异常/正常」 | 不判定业务指标（订单量、QPS 归属业务侧） |
+| 输出结构化日志 | 不提供 HTTP 查询接口、不做前端页面（见 §9 TODO） |
+| 生命周期跟随 `ctx`，随时可退出 | 不热加载策略、不持久化历史数据 |
+
+它不放进 `pkg`：这里编码的是「本服务看哪些信号、什么阈值、多久看一次」的策略，不是无业务语义的可复用基础设施。将来真要拆成独立 module，再整体迁移，见 §8.1。
+
+## 2. 概念
+
+四个概念，分布在三个包：
+
+```text
+cmd/server/main.go
+  └─ monitor.Run(ctx, log, monitor.Deps{DB: db})    入口：选来源、装配
+       ├─ monitor.source                          来源表：一路依赖 → 一批 Check
+       ├─ core.Registry                           调度：节拍、panic 隔离、输出
+       └─ core.Poll[T] + pg.Strategy              通用监控项：取快照 → 差分 → 策略链
+```
+
+### 2.1 `core.Result`
+
+一条监控结论：
+
+| 字段 | 含义 |
+| --- | --- |
+| `Msg` | 日志消息。为空表示这次不输出 |
+| `Level` | 日志级别。健康是 `debug`，异常是 `warn`，由监控项自己决定 |
+| `Attrs` | `slog` 的 key/value 对，原样展开 |
+
+### 2.2 `core.Check`
+
+一个监控项，三个方法：
+
+```go
+type Check interface {
+	Name() string                        // 同时是日志里的 monitor 字段，注册表内唯一
+	Interval() time.Duration             // <= 0 时用 DefaultInterval（30s）
+	Sample(ctx context.Context) Result   // 单 goroutine 串行调用，实现不必考虑并发
+}
+```
+
+关闭某个监控项的方式是**不注册它**，不是配一个 `enabled: false`。
+
+### 2.3 `core.Registry`
+
+只做三件事：按名字去重注册（`Add` 对 nil、空名、重名直接 panic，接线错误要在启动时暴露）、给每个监控项起一个 goroutine 并按间隔采样（`Run`）、把 `Result` 写进日志（`fire`，带 `recover`）。
+
+它不认识任何具体组件，也不决定「开哪些检查」。
+
+### 2.4 `core.Poll[T]`
+
+「取快照 → 差分 → 按策略链判定」这一类监控项的通用实现，泛型参数 `T` 是快照类型：
+
+```go
+core.NewPoll("postgres.pool", core.DefaultInterval, take, strategies...)
+```
+
+- `take func(context.Context) (T, error)`：把数据源当前状态读成 `T`。
+- 第一个 tick **只建基线、不判定**：装配期不访问数据源，走网络的源（如 Redis `INFO`）也不必为基线多连一次。
+- 取数失败输出 `<name> sample failed`（`warn`，带 `error`），不交给策略链判断。
+- 策略链按顺序尝试，**第一条认领的生效**；都不认领时返回空 `Result`，注册表跳过。
+
+### 2.5 `core.Strategy[T]`
+
+```go
+type Strategy[T any] func(prev, cur T) (Result, bool)
+```
+
+纯函数：同样的 `(prev, cur)` 永远得到同样的结果，可以脱离数据源单独测试。`core.Delta` / `core.DurationDelta` 把累计值折算成非负增量（数据源重置时按 0 处理，避免日志里出现负数）。
+
+## 3. 装配链
+
+`cmd/server` 只有五行，且不出现任何具体检查名：
+
+```go
+if cfg.Monitor.Enabled {
+	monitor.Run(ctx, log, monitor.Deps{DB: db})
+} else {
+	log.Info("monitor disabled by config")
+}
+```
+
+`monitor.Run` 的职责：
+
+1. 遍历 `sources` 表（当前一行：`postgres` → `pg.Checks(d.DB)`），逐路装配；
+2. **某一路失败只跳过这一路**，输出 `monitor source unavailable`（`warn`，带 `source` 与 `error`），其他来源照常启动；
+3. 没有任何可用检查时直接返回，不起协程：无失败输出 `monitor disabled: no checks registered`，有失败输出 `monitor disabled: no checks available`；
+4. 有检查时输出 `monitor started`（带 `checks` 名字列表），创建 `Registry`，然后 `go registry.Run(ctx)` 并**立即返回**。
+
+协程的创建全部在 `monitor` 包内完成：一个调度协程 + 每个监控项一个采样协程。调用方不写 `go`，也不等它退出。
+
+开关是**部署期**的：`monitor.enabled`（`MONITOR_ENABLED`），默认 `true`。没有热加载；关闭时启动日志会留一条记录，避免监控悄悄消失。
+
+## 4. 调度语义
+
+每个监控项独立：
+
+```text
+启动 ──[0, interval) 随机相位──▶ T0 ──interval──▶ T0+interval ──▶ ...
+```
+
+- **初始相位随机一次**。所有检查是在同一瞬间启动的，不抖动的话它们会一直锁在同一秒醒来：多路采样同时打同一个依赖、日志成串、多副本一起滚动重启后仍然对齐。只随机这一次，周期保持精确，采样时间戳依旧可预测。
+- 抖动的局限：它打散的是「检查之间」「副本之间」的碰撞；与外部整点事件（`cron`、抓取）的重合任何固定周期都躲不开，30 秒又恰好整除 60 秒，判定为可接受。
+- **ticker 不漂移**：采样慢于间隔时丢样本而不是错位（`time.Ticker` 通道容量为 1，错过即丢）。因此相位承诺在慢采样下依然成立。
+- 一个采样卡住只影响它自己（每个检查独立 goroutine），但会静默地少采几次——目前没有单次采样超时，见 §9。
+- 每个检查的 `Sample` 在自己的 goroutine 里串行调用，实现不需要考虑并发。
+- `ctx` 取消后所有采样协程退出，`Run` 返回。
+
+## 5. 判定策略（PostgreSQL 连接池）
+
+`pg.Checks(db *gorm.DB, ss ...Strategy)` 收 `*gorm.DB` 而不是 `*sql.DB`：`gorm → database/sql` 的转换是 pg 自己的知识，不该出现在 `monitor` 的开关表里（Redis、ES 都没有这一步）。`db` 为 `nil` 时返回空，`db.DB()` 失败时把错误交给 `monitor` 记一条 warning。
+
+默认策略顺序，从重到轻：
+
+| 顺序 | 策略 | 认领条件 | 级别 | 消息 |
+| --- | --- | --- | --- | --- |
+| 1 | `Waiting` | 本区间内 `WaitCount` 有增量 | warn | `postgres pool waiting` |
+| 2 | `Exhaustion(0.8)` | `InUse / MaxOpen ≥ 0.8` | warn | `postgres pool nearly exhausted` |
+| 3 | `Recycling` | 本区间内有连接因空闲/寿命被回收 | info | `postgres pool recycling connections` |
+| 4 | `Healthy` | 总是认领（兜底） | debug | `postgres pool healthy` |
+
+几处细节：
+
+- `Exhaustion` 用**除法比较**而不是 `ratio*max_open`：`0.8*15` 会算出 `12.000000000000002`，边界上判不中；`1e-9` 的容差吸收 `2/3` 这类除不尽的比率。
+- `max_open = 0`（不限量）时 `Exhaustion` 不生效。
+- `wait_count`、`wait_duration` 这类是**累计值**，日志里给的是区间增量；多副本各记各的，PostgreSQL 侧没有对应视图（`pg_stat_activity` 看不到客户端排队）。
+- 慢查询日志的 `elapsed` **包含池等待**（GORM 在整条回调链之后才 `Trace`，而取连接发生在链内），所以「等连接」与「执行慢」只能靠这里区分——这是连接池监控的核心价值。
+
+## 6. 日志契约
+
+| 事件 | 级别 | 关键字段 |
+| --- | --- | --- |
+| `monitor started` | info | `checks`（名字列表） |
+| `monitor disabled: no checks registered` | info | — |
+| `monitor disabled: no checks available` | info | — |
+| `monitor source unavailable` | warn | `source`、`error` |
+| `monitor disabled by config` | info | — |
+| `monitor check panicked` | error | `panic` |
+| `<name> sample failed` | warn | `error` |
+| `postgres pool healthy` | debug | `open`、`in_use`、`idle`、`max_open` |
+| `postgres pool waiting` | warn | `waits`、`waited`、`avg_wait` + 池字段 |
+| `postgres pool nearly exhausted` | warn | 池字段 |
+| `postgres pool recycling connections` | info | `idle_closed`、`lifetime_closed` + 池字段 |
+
+每条采样日志都带 `monitor=<name>`（如 `monitor=postgres.pool`），来自 `Registry` 的 scoped logger。默认日志级别是 `info`，健康采样走 `debug` 因此不可见：正常运行**不产生任何监控日志**——这是有意的，健康不需要占一行。
+
+## 7. 失败处理
+
+三层，互不干扰：
+
+1. **来源不可用**（如 `db.DB()` 出错）：跳过该来源，`warn` 一条，其他来源继续；全部失败时监控退化为「无检查」，进程照常运行。
+2. **单次采样失败**（`Poll.take` 返回 error）：`warn` 一条 `<name> sample failed`，下一个 tick 继续尝试。
+3. **采样 panic**：`fire` 的 `recover` 捕获，`error` 一条 `monitor check panicked`，进程与其他监控项不受影响。
+
+监控永远不是启动的前置条件：任何一层失败都不会让进程退出。
+
+## 8. 扩展
+
+### 8.1 加一个监控来源（以 Redis 为例）
+
+1. 新建 `internal/monitor/redis/redis.go`，用 `core.NewPoll[redis.PoolStats]` 组装监控项，策略与 `pg` 同形（`Waiting` / `Exhaustion` / `Healthy`）；
+2. 在 `monitor.go` 的 `sources` 表加一行：`{name: "redis", build: func(d Deps) ([]core.Check, error) { return redisx.Checks(d.Redis) }}`；
+3. `Deps` 增加字段 `Redis *redis.Client`；
+4. `cmd/server` 的 `monitor.Deps{DB: db, Redis: rdb}` 多传一个依赖，**其余不动**；
+5. 补测试：策略纯函数单测 + `checks` 的「一路失败不影响另一路」。
+
+`cmd` 始终只知道 `monitor.Run`，检查名、阈值、节拍都留在 `monitor` 内。
+
+### 8.2 加一个判定规则
+
+写一个 `func(prev, cur T) (core.Result, bool)`，插到 `DefaultStrategies()` 里合适的位置（从重到轻），补一条纯函数测试。不要修改 `Poll` 或 `Registry`。
+
+## 9. 已知缺口（TODO）
+
+监控目前只有**日志**这一条出口。日志是事件流，回答不了「此刻连接池是什么样」；要做「后台可看的监控页面」，本质是一个前后端模块，不是一次小改动，因此暂缓，留作 TODO：
+
+- **状态缓存与读出口**：`Registry` 保存每个检查最近一次 `Result`（采样时间、级别、字段），提供读取入口。
+  - 注意读操作**不能直接调 `Sample`**：`Poll` 的判定基于相邻快照的增量，额外采样会消耗掉本区间的增量，页面刷新会改变日志行为。
+  - 出口形态待定：`/debug/monitor`（仅内网/管理员）还是管理后台页面（要走权限体系 `system:monitor:list`）。
+- **指标导出**：把同样的 `Result` 投影成 Prometheus 指标（`counter`/`gauge`），与日志共用采样，不重复采集。
+- **单次采样超时**：`Sample` 卡住时 ticker 会丢样本且无告警。走网络的采样（Redis `INFO`、ES）需要超时；内存采样不需要，目前刻意不做。
+- **按来源配置节拍**：现在是全局 `DefaultInterval`。等到有慢源（网络往返）再考虑，避免过早引入配置面。
+- **前端页面**：图表、时间范围、多副本聚合——需要先有指标存储，属于独立模块。
+
+## 10. 文件与测试
+
+| 路径 | 职责 |
+| --- | --- |
+| `internal/monitor/monitor.go` | 入口：`Deps`、`sources` 表、`Run`、`checks` |
+| `internal/monitor/core/monitor.go` | `DefaultInterval`、`Result`、`Check` |
+| `internal/monitor/core/registry.go` | `Registry`：注册、调度、panic 隔离、输出 |
+| `internal/monitor/core/poll.go` | `Poll[T]`、`Strategy[T]`、`Delta`、`DurationDelta` |
+| `internal/monitor/pg/pg.go` | 连接池监控项与四条默认策略 |
+| `internal/config/monitor.go` | `monitor.enabled` 开关 |
+
+测试共 27 个：`core` 12 个（注册表 7 + `Poll` 5）、`pg` 10 个（策略纯函数、边界、默认顺序、真实 `Poll` 的增量判定、句柄不可用）、`monitor` 5 个（装配、空依赖、一路失败不影响其他路、无事可做时不起协程）。
+
+运行方式：`go test ./internal/monitor/...`。

@@ -158,6 +158,7 @@ make check                # 前后端一起检查
 - [接口文档](docs/api.md)：全部接口与请求/响应示例。
 - [部署说明](docs/deployment.md)：构建、反向代理、systemd、环境变量清单。
 - [配置说明](docs/backend/config.md)：分层装配、配置文件查找、扩展方式。
+- [监控模块](docs/backend/monitor.md)：采样调度、判定策略、日志契约、扩展与已知缺口。
 - [技术笔记](docs/note/README.md)：信号与进程退出、`context` 取消树、Go 并发控制的学习顺序。
 
 
