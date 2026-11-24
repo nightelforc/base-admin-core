@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 )
@@ -72,8 +73,20 @@ func (r *Registry) Run(ctx context.Context) {
 
 func (r *Registry) run(ctx context.Context, c Check) {
 	log := r.log.With("monitor", c.Name())
+	interval := intervalOf(c)
 
-	ticker := time.NewTicker(intervalOf(c))
+	// 所有检查都是在同一瞬间启动的，不抖动的话它们会永远锁在同一秒醒来：
+	// 多路采样同时打同一个依赖、日志成串、各副本一起滚动重启后仍然对齐。
+	// 只随机初始相位一次，周期保持精确，采样时间戳依旧可预测。
+	timer := time.NewTimer(rand.N(interval))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return
+	}
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
