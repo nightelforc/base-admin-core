@@ -3,7 +3,6 @@ package pg
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -12,14 +11,10 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/internal/monitor/core"
 )
 
-func attrMap(res core.Result) map[string]any {
-	m := make(map[string]any, len(res.Attrs)/2)
-	for i := 0; i+1 < len(res.Attrs); i += 2 {
-		key, ok := res.Attrs[i].(string)
-		if !ok {
-			continue
-		}
-		m[key] = res.Attrs[i+1]
+func metricMap(metrics []core.Metric) map[string]core.Metric {
+	m := make(map[string]core.Metric, len(metrics))
+	for _, mt := range metrics {
+		m[mt.Name] = mt
 	}
 	return m
 }
@@ -39,22 +34,8 @@ func TestWaiting(t *testing.T) {
 	if !ok {
 		t.Fatal("Waiting should claim a snapshot with new waits")
 	}
-	if res.Msg != "postgres pool waiting" || res.Level != slog.LevelWarn {
-		t.Fatalf("got %q at %v", res.Msg, res.Level)
-	}
-
-	attrs := attrMap(res)
-	if got := attrs["waits"]; got != int64(10) {
-		t.Fatalf("waits = %v, want 10", got)
-	}
-	if got := attrs["waited"]; got != 25*time.Second {
-		t.Fatalf("waited = %v, want 25s", got)
-	}
-	if got := attrs["avg_wait"]; got != 2500*time.Millisecond {
-		t.Fatalf("avg_wait = %v, want 2.5s", got)
-	}
-	if got := attrs["max_open"]; got != 15 {
-		t.Fatalf("max_open = %v, want 15", got)
+	if res.Msg != "postgres pool waiting" || res.Severity != core.SeverityWarn {
+		t.Fatalf("got %q at %v", res.Msg, res.Severity)
 	}
 }
 
@@ -90,29 +71,14 @@ func TestExhaustion(t *testing.T) {
 
 func TestRecycling(t *testing.T) {
 	prev := sql.DBStats{MaxIdleClosed: 1}
-	cur := sql.DBStats{
-		MaxOpenConnections: 15,
-		OpenConnections:    8,
-		InUse:              2,
-		Idle:               6,
-		MaxIdleClosed:      4,
-		MaxLifetimeClosed:  2,
-	}
+	cur := sql.DBStats{MaxIdleClosed: 4, MaxLifetimeClosed: 2}
 
 	res, ok := Recycling(prev, cur)
 	if !ok {
 		t.Fatal("Recycling should claim a snapshot with closed connections")
 	}
-	if res.Msg != "postgres pool recycling connections" || res.Level != slog.LevelInfo {
-		t.Fatalf("got %q at %v", res.Msg, res.Level)
-	}
-
-	attrs := attrMap(res)
-	if got := attrs["idle_closed"]; got != int64(3) {
-		t.Fatalf("idle_closed = %v, want 3", got)
-	}
-	if got := attrs["lifetime_closed"]; got != int64(2) {
-		t.Fatalf("lifetime_closed = %v, want 2", got)
+	if res.Msg != "postgres pool recycling connections" || res.Severity != core.SeverityNotice {
+		t.Fatalf("got %q at %v", res.Msg, res.Severity)
 	}
 }
 
@@ -121,8 +87,8 @@ func TestHealthyAlwaysClaims(t *testing.T) {
 	if !ok {
 		t.Fatal("Healthy must always claim so it can serve as the fallback")
 	}
-	if res.Msg != "postgres pool healthy" || res.Level != slog.LevelDebug {
-		t.Fatalf("got %q at %v", res.Msg, res.Level)
+	if res.Msg != "postgres pool healthy" || res.Severity != core.SeverityOK {
+		t.Fatalf("got %q at %v", res.Msg, res.Severity)
 	}
 }
 
@@ -146,6 +112,55 @@ func TestDefaultStrategiesPreferHeavierSignals(t *testing.T) {
 	t.Fatal("no strategy matched")
 }
 
+func TestPoolMetricsShapesCountersAndDurations(t *testing.T) {
+	prev := sql.DBStats{WaitCount: 2, WaitDuration: time.Second, MaxIdleClosed: 1}
+	cur := sql.DBStats{
+		MaxOpenConnections: 15,
+		OpenConnections:    15,
+		InUse:              4,
+		Idle:               11,
+		WaitCount:          12,
+		WaitDuration:       26 * time.Second,
+		MaxIdleClosed:      4,
+		MaxLifetimeClosed:  2,
+	}
+
+	metrics := metricMap(poolMetrics(prev, cur))
+
+	want := map[string]struct {
+		unit  core.Unit
+		value float64
+	}{
+		"waits":           {core.UnitCount, 10},
+		"waited":          {core.UnitSeconds, 25},
+		"avg_wait":        {core.UnitSeconds, 2.5},
+		"open":            {core.UnitCount, 15},
+		"in_use":          {core.UnitCount, 4},
+		"idle":            {core.UnitCount, 11},
+		"max_open":        {core.UnitCount, 15},
+		"idle_closed":     {core.UnitCount, 3},
+		"lifetime_closed": {core.UnitCount, 2},
+	}
+
+	for name, w := range want {
+		got, ok := metrics[name]
+		if !ok {
+			t.Fatalf("metric %q missing", name)
+		}
+		if got.Unit != w.unit || got.Value != w.value {
+			t.Fatalf("metric %q = {%v, %v}, want {%v, %v}", name, got.Unit, got.Value, w.unit, w.value)
+		}
+	}
+}
+
+func TestPoolMetricsAverageIsZeroWithoutWaits(t *testing.T) {
+	s := sql.DBStats{WaitCount: 9, WaitDuration: 3 * time.Second}
+	metrics := metricMap(poolMetrics(s, s))
+	if got := metrics["avg_wait"].Value; got != 0 {
+		t.Fatalf("avg_wait = %v, want 0", got)
+	}
+}
+
 func TestPollJudgesIntervalDelta(t *testing.T) {
 	snaps := []sql.DBStats{
 		{MaxOpenConnections: 15, OpenConnections: 5, InUse: 1, Idle: 4, WaitCount: 5, WaitDuration: 3 * time.Second},
@@ -160,9 +175,13 @@ func TestPollJudgesIntervalDelta(t *testing.T) {
 		return s, nil
 	}
 
-	check := core.NewPoll("postgres.pool", core.DefaultInterval, take, DefaultStrategies()...)
-	if res := check.Sample(context.Background()); res.Msg != "" {
-		t.Fatalf("first sample = %q, want baseline only", res.Msg)
+	check := core.NewPoll("postgres.pool", core.DefaultInterval, take, poolMetrics, DefaultStrategies()...)
+	base := check.Sample(context.Background())
+	if base.Msg != "" {
+		t.Fatalf("first sample = %q, want baseline only", base.Msg)
+	}
+	if got := metricMap(base.Metrics)["waits"].Value; got != 0 {
+		t.Fatalf("baseline waits = %v, want 0", got)
 	}
 
 	// 第二个 tick 对应第一段增量：3 次等待、6 秒。
@@ -170,8 +189,12 @@ func TestPollJudgesIntervalDelta(t *testing.T) {
 	if res.Msg != "postgres pool waiting" {
 		t.Fatalf("msg = %q, want postgres pool waiting", res.Msg)
 	}
-	if got := attrMap(res)["waits"]; got != int64(3) {
+	metrics := metricMap(res.Metrics)
+	if got := metrics["waits"].Value; got != 3 {
 		t.Fatalf("waits = %v, want 3 (only the delta)", got)
+	}
+	if got := metrics["waited"].Value; got != 6 {
+		t.Fatalf("waited = %v, want 6", got)
 	}
 
 	// 快照不再变化：没有新增量，回落到 healthy。

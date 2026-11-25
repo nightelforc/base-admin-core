@@ -64,7 +64,7 @@ func TestChecksKeepsGoingAfterASourceFailure(t *testing.T) {
 		build: func(Deps) ([]core.Check, error) {
 			return []core.Check{core.NewPoll("fake", 0, func(context.Context) (int, error) {
 				return 0, nil
-			})}, nil
+			}, nil)}, nil
 		},
 	}
 

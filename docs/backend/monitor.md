@@ -23,7 +23,7 @@
 
 ## 2. 概念
 
-四个概念，分布在三个包：
+五个概念，分布在三个包：
 
 ```text
 cmd/server/main.go
@@ -35,13 +35,26 @@ cmd/server/main.go
 
 ### 2.1 `core.Result`
 
-一条监控结论：
+一条监控结论，把三件事分开：**判定**（多严重）、**呈现**（要不要说）、**数据**（数值）：
 
 | 字段 | 含义 |
 | --- | --- |
-| `Msg` | 日志消息。为空表示这次不输出 |
-| `Level` | 日志级别。健康是 `debug`，异常是 `warn`，由监控项自己决定 |
-| `Attrs` | `slog` 的 key/value 对，原样展开 |
+| `Msg` | 日志消息。为空表示这次不输出日志——但不代表没有数据 |
+| `Severity` | 严重度：`OK` / `Notice` / `Warn` / `Unknown` |
+| `Metrics` | 本次采样的数值；成功采样时都有，健康时也有 |
+| `Err` | 采样失败的原因；正常为 `nil` |
+
+`Severity` 不是日志级别：日志只是它的一种渲染（`Registry.levelOf` 一处映射），告警路由是另一个消费者。因此 core 不依赖 `slog`，将来接告警也不必解析日志配置。
+
+```go
+type Metric struct {
+	Name  string  // 短名，如 in_use；完整身份 = 检查名 + 指标名
+	Unit  Unit    // UnitCount / UnitSeconds / UnitBytes / UnitRatio
+	Value float64
+}
+```
+
+`Unit` 让下游恢复类型：`UnitSeconds` 渲染回 `time.Duration`，日志里才是 `4h12m` 而不是 `15120`。
 
 ### 2.2 `core.Check`
 
@@ -68,13 +81,14 @@ type Check interface {
 「取快照 → 差分 → 按策略链判定」这一类监控项的通用实现，泛型参数 `T` 是快照类型：
 
 ```go
-core.NewPoll("postgres.pool", core.DefaultInterval, take, strategies...)
+core.NewPoll("postgres.pool", core.DefaultInterval, take, poolMetrics, strategies...)
 ```
 
 - `take func(context.Context) (T, error)`：把数据源当前状态读成 `T`。
-- 第一个 tick **只建基线、不判定**：装配期不访问数据源，走网络的源（如 Redis `INFO`）也不必为基线多连一次。
-- 取数失败输出 `<name> sample failed`（`warn`，带 `error`），不交给策略链判断。
-- 策略链按顺序尝试，**第一条认领的生效**；都不认领时返回空 `Result`，注册表跳过。
+- `measure func(prev, cur T) []Metric`：把相邻两次快照摊成数值。**每次采样都调用**，包括基线 tick。
+- 第一个 tick **只建基线、不判定**，但照样产出指标（`measure(cur, cur)`，增量自然是 0）：读取方从启动就能画图，装配期也不必为了基线多访问一次数据源。
+- 取数失败输出 `<name> sample failed`（`Warn`，带 `error`，无指标），不交给策略链判断。
+- 策略链按顺序尝试，**第一条认领的生效**；都不认领时返回不带消息、但仍带指标的 `Result`，注册表只跳过日志。
 
 ### 2.5 `core.Strategy[T]`
 
@@ -82,7 +96,7 @@ core.NewPoll("postgres.pool", core.DefaultInterval, take, strategies...)
 type Strategy[T any] func(prev, cur T) (Result, bool)
 ```
 
-纯函数：同样的 `(prev, cur)` 永远得到同样的结果，可以脱离数据源单独测试。`core.Delta` / `core.DurationDelta` 把累计值折算成非负增量（数据源重置时按 0 处理，避免日志里出现负数）。
+纯函数：同样的 `(prev, cur)` 永远得到同样的结果，可以脱离数据源单独测试。策略只填 `Msg` 与 `Severity`——**数值统一由 `measure` 产出**，日志和将来的指标端点读同一份数据，不会各算一套。`core.Delta` / `core.DurationDelta` 把累计值折算成非负增量（数据源重置时按 0 处理，避免日志里出现负数）。
 
 ## 3. 装配链
 
@@ -128,12 +142,14 @@ if cfg.Monitor.Enabled {
 
 默认策略顺序，从重到轻：
 
-| 顺序 | 策略 | 认领条件 | 级别 | 消息 |
+| 顺序 | 策略 | 认领条件 | 严重度 | 消息 |
 | --- | --- | --- | --- | --- |
-| 1 | `Waiting` | 本区间内 `WaitCount` 有增量 | warn | `postgres pool waiting` |
-| 2 | `Exhaustion(0.8)` | `InUse / MaxOpen ≥ 0.8` | warn | `postgres pool nearly exhausted` |
-| 3 | `Recycling` | 本区间内有连接因空闲/寿命被回收 | info | `postgres pool recycling connections` |
-| 4 | `Healthy` | 总是认领（兜底） | debug | `postgres pool healthy` |
+| 1 | `Waiting` | 本区间内 `WaitCount` 有增量 | `Warn` | `postgres pool waiting` |
+| 2 | `Exhaustion(0.8)` | `InUse / MaxOpen ≥ 0.8` | `Warn` | `postgres pool nearly exhausted` |
+| 3 | `Recycling` | 本区间内有连接因空闲/寿命被回收 | `Notice` | `postgres pool recycling connections` |
+| 4 | `Healthy` | 总是认领（兜底） | `OK` | `postgres pool healthy` |
+
+每次采样固定产出九个指标，与哪条策略认领无关：`waits`、`waited`、`avg_wait`、`open`、`in_use`、`idle`、`max_open`、`idle_closed`、`lifetime_closed`。`waits` 是区间增量、`open` 一类是当前值；没有新增等待时 `avg_wait` 记 0，不做除法。
 
 几处细节：
 
@@ -203,12 +219,12 @@ if cfg.Monitor.Enabled {
 | 路径 | 职责 |
 | --- | --- |
 | `internal/monitor/monitor.go` | 入口：`Deps`、`sources` 表、`Run`、`checks` |
-| `internal/monitor/core/monitor.go` | `DefaultInterval`、`Result`、`Check` |
+| `internal/monitor/core/monitor.go` | `DefaultInterval`、`Severity`、`Unit`、`Metric`、`Result`、`Check` |
 | `internal/monitor/core/registry.go` | `Registry`：注册、调度、panic 隔离、输出 |
 | `internal/monitor/core/poll.go` | `Poll[T]`、`Strategy[T]`、`Delta`、`DurationDelta` |
 | `internal/monitor/pg/pg.go` | 连接池监控项与四条默认策略 |
 | `internal/config/monitor.go` | `monitor.enabled` 开关 |
 
-测试共 27 个：`core` 12 个（注册表 7 + `Poll` 5）、`pg` 10 个（策略纯函数、边界、默认顺序、真实 `Poll` 的增量判定、句柄不可用）、`monitor` 5 个（装配、空依赖、一路失败不影响其他路、无事可做时不起协程）。
+测试共 31 个：`core` 14 个（注册表 9 + `Poll` 5）、`pg` 12 个（策略纯函数、边界、默认顺序、指标形状、真实 `Poll` 的增量判定、句柄不可用）、`monitor` 5 个（装配、空依赖、一路失败不影响其他路、无事可做时不起协程）。
 
 运行方式：`go test ./internal/monitor/...`。

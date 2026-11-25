@@ -106,8 +106,43 @@ func (r *Registry) fire(ctx context.Context, c Check, log *slog.Logger) {
 		}
 	}()
 
-	if res := c.Sample(ctx); res.Msg != "" {
-		log.Log(ctx, res.Level, res.Msg, res.Attrs...)
+	res := c.Sample(ctx)
+	if res.Msg == "" {
+		return
+	}
+
+	args := make([]any, 0, 2*len(res.Metrics)+2)
+	for _, m := range res.Metrics {
+		args = append(args, m.Name, metricValue(m))
+	}
+	if res.Err != nil {
+		args = append(args, "error", res.Err)
+	}
+	log.Log(ctx, levelOf(res.Severity), res.Msg, args...)
+}
+
+// levelOf 是严重度到日志级别的唯一映射。监控项不再自己决定日志级别，
+// 以后接告警也不去解析日志配置。
+func levelOf(s Severity) slog.Level {
+	switch s {
+	case SeverityNotice:
+		return slog.LevelInfo
+	case SeverityWarn, SeverityUnknown:
+		return slog.LevelWarn
+	default:
+		return slog.LevelDebug
+	}
+}
+
+// metricValue 把数值还原成有意义的类型：秒还原成时长，日志里才是 4h12m 而不是 15120。
+func metricValue(m Metric) any {
+	switch m.Unit {
+	case UnitSeconds:
+		return time.Duration(m.Value * float64(time.Second))
+	case UnitCount:
+		return int64(m.Value)
+	default:
+		return m.Value
 	}
 }
 

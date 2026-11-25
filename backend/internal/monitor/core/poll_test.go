@@ -3,78 +3,96 @@ package core
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 	"time"
 )
 
-func attrMap(res Result) map[string]any {
-	m := make(map[string]any, len(res.Attrs)/2)
-	for i := 0; i+1 < len(res.Attrs); i += 2 {
-		key, ok := res.Attrs[i].(string)
-		if !ok {
-			continue
-		}
-		m[key] = res.Attrs[i+1]
+func metricMap(res Result) map[string]Metric {
+	m := make(map[string]Metric, len(res.Metrics))
+	for _, mt := range res.Metrics {
+		m[mt.Name] = mt
 	}
 	return m
 }
 
-func TestPollFirstSampleOnlyBuildsBaseline(t *testing.T) {
+func TestPollFirstSampleBuildsBaselineWithMetrics(t *testing.T) {
 	calls := 0
 	p := NewPoll("counter", time.Second, func(context.Context) (int, error) {
 		calls++
 		return calls, nil
+	}, func(prev, cur int) []Metric {
+		return []Metric{{Name: "delta", Unit: UnitCount, Value: float64(cur - prev)}}
 	}, func(prev, cur int) (Result, bool) {
-		return Result{Msg: "counter changed", Attrs: []any{"delta", cur - prev}}, prev != cur
+		return Result{Msg: "counter changed", Severity: SeverityNotice}, prev != cur
 	})
 
-	if res := p.Sample(context.Background()); res.Msg != "" {
-		t.Fatalf("first sample = %q, want no output (baseline only)", res.Msg)
+	// 基线 tick 不出日志，但指标要在：读取方从启动就能画图，增量自然是 0。
+	base := p.Sample(context.Background())
+	if base.Msg != "" {
+		t.Fatalf("first sample = %q, want no output (baseline only)", base.Msg)
+	}
+	if base.Severity != SeverityOK {
+		t.Fatalf("baseline severity = %v, want OK", base.Severity)
+	}
+	if got := metricMap(base)["delta"]; got.Value != 0 {
+		t.Fatalf("baseline delta = %v, want 0", got.Value)
 	}
 
 	res := p.Sample(context.Background())
 	if res.Msg != "counter changed" {
 		t.Fatalf("second sample = %q, want counter changed", res.Msg)
 	}
-	if got := attrMap(res)["delta"]; got != 1 {
-		t.Fatalf("delta = %v, want 1", got)
+	if res.Severity != SeverityNotice {
+		t.Fatalf("second sample severity = %v, want notice", res.Severity)
+	}
+	if got := metricMap(res)["delta"]; got.Value != 1 {
+		t.Fatalf("delta = %v, want 1", got.Value)
 	}
 }
 
 func TestPollReportsTakeFailure(t *testing.T) {
 	p := NewPoll("counter", time.Second, func(context.Context) (int, error) {
 		return 0, errors.New("boom")
-	})
+	}, nil)
 
 	res := p.Sample(context.Background())
-	if res.Level != slog.LevelWarn {
-		t.Fatalf("level = %v, want warn", res.Level)
+	if res.Severity != SeverityWarn {
+		t.Fatalf("severity = %v, want warn", res.Severity)
 	}
 	if !strings.Contains(res.Msg, "sample failed") {
 		t.Fatalf("msg = %q, want it to mention the failed sample", res.Msg)
 	}
-	if got := attrMap(res)["error"]; got == nil {
+	if res.Err == nil {
 		t.Fatal("failed sample must carry the error")
+	}
+	if len(res.Metrics) != 0 {
+		t.Fatalf("failed sample produced %d metrics, want none", len(res.Metrics))
 	}
 }
 
 func TestPollIsSilentWhenNoStrategyClaims(t *testing.T) {
 	p := NewPoll("counter", time.Second, func(context.Context) (int, error) {
 		return 1, nil
+	}, func(prev, cur int) []Metric {
+		return []Metric{{Name: "value", Unit: UnitCount, Value: float64(cur)}}
 	}, func(_, _ int) (Result, bool) {
 		return Result{}, false
 	})
 
 	p.Sample(context.Background())
-	if res := p.Sample(context.Background()); res.Msg != "" {
+	res := p.Sample(context.Background())
+	if res.Msg != "" {
 		t.Fatalf("sample = %q, want no output", res.Msg)
+	}
+	// 没有策略认领不等于没有数据：健康 tick 也必须带指标。
+	if got := metricMap(res)["value"]; got.Value != 1 {
+		t.Fatalf("healthy tick value = %v, want 1", got.Value)
 	}
 }
 
 func TestPollUsesDefaultIntervalWhenUnset(t *testing.T) {
-	p := NewPoll("counter", 0, func(context.Context) (int, error) { return 0, nil })
+	p := NewPoll("counter", 0, func(context.Context) (int, error) { return 0, nil }, nil)
 	if got := intervalOf(p); got != DefaultInterval {
 		t.Fatalf("interval = %v, want %v", got, DefaultInterval)
 	}

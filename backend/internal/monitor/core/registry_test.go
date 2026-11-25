@@ -65,7 +65,11 @@ func TestRegistryRunsChecksUntilCancel(t *testing.T) {
 		name:  "demo",
 		every: time.Millisecond,
 		sample: func() Result {
-			return Result{Msg: "demo tick", Level: slog.LevelInfo, Attrs: []any{"k", "v"}}
+			return Result{
+				Msg:      "demo tick",
+				Severity: SeverityNotice,
+				Metrics:  []Metric{{Name: "k", Unit: UnitCount, Value: 1}},
+			}
 		},
 	})
 
@@ -88,10 +92,40 @@ func TestRegistryRunsChecksUntilCancel(t *testing.T) {
 	}
 
 	out := buf.String()
-	for _, want := range []string{"level=INFO", "monitor=demo", "k=v"} {
+	for _, want := range []string{"level=INFO", "monitor=demo", "k=1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestLevelOfMapsSeverityToLogLevel(t *testing.T) {
+	cases := []struct {
+		severity Severity
+		want     slog.Level
+	}{
+		{SeverityOK, slog.LevelDebug},
+		{SeverityNotice, slog.LevelInfo},
+		{SeverityWarn, slog.LevelWarn},
+		{SeverityUnknown, slog.LevelWarn},
+	}
+
+	for _, tc := range cases {
+		if got := levelOf(tc.severity); got != tc.want {
+			t.Fatalf("levelOf(%v) = %v, want %v", tc.severity, got, tc.want)
+		}
+	}
+}
+
+func TestMetricValueRendersByUnit(t *testing.T) {
+	if got := metricValue(Metric{Unit: UnitSeconds, Value: 90}); got != 90*time.Second {
+		t.Fatalf("seconds rendered as %v, want 1m30s", got)
+	}
+	if got := metricValue(Metric{Unit: UnitCount, Value: 3}); got != int64(3) {
+		t.Fatalf("count rendered as %v, want int64(3)", got)
+	}
+	if got := metricValue(Metric{Unit: UnitRatio, Value: 0.5}); got != 0.5 {
+		t.Fatalf("ratio rendered as %v, want 0.5", got)
 	}
 }
 

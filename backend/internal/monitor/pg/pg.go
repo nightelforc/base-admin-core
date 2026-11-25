@@ -7,7 +7,6 @@ package pg
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -37,7 +36,7 @@ func Checks(db *gorm.DB, ss ...Strategy) ([]core.Check, error) {
 	}
 
 	take := func(context.Context) (sql.DBStats, error) { return sqlDB.Stats(), nil }
-	return []core.Check{core.NewPoll("postgres.pool", core.DefaultInterval, take, ss...)}, nil
+	return []core.Check{core.NewPoll("postgres.pool", core.DefaultInterval, take, poolMetrics, ss...)}, nil
 }
 
 // DefaultStrategies 是默认判定顺序：从重到轻，Healthy 兜底。
@@ -47,21 +46,10 @@ func DefaultStrategies() []Strategy {
 
 // Waiting 认领「本区间内有请求等过连接」。
 func Waiting(prev, cur sql.DBStats) (core.Result, bool) {
-	waits := core.Delta(cur.WaitCount, prev.WaitCount)
-	if waits == 0 {
+	if core.Delta(cur.WaitCount, prev.WaitCount) == 0 {
 		return core.Result{}, false
 	}
-
-	waited := core.DurationDelta(cur.WaitDuration, prev.WaitDuration)
-	return core.Result{
-		Msg:   "postgres pool waiting",
-		Level: slog.LevelWarn,
-		Attrs: append([]any{
-			"waits", waits,
-			"waited", waited,
-			"avg_wait", waited / time.Duration(waits),
-		}, poolAttrs(cur)...),
-	}, true
+	return core.Result{Msg: "postgres pool waiting", Severity: core.SeverityWarn}, true
 }
 
 // Exhaustion 认领使用率达到 max_open 的 ratio；连接池不限量（max_open = 0）时不生效。
@@ -77,11 +65,7 @@ func Exhaustion(ratio float64) Strategy {
 		if float64(cur.InUse)/float64(maxOpen)+1e-9 < ratio {
 			return core.Result{}, false
 		}
-		return core.Result{
-			Msg:   "postgres pool nearly exhausted",
-			Level: slog.LevelWarn,
-			Attrs: poolAttrs(cur),
-		}, true
+		return core.Result{Msg: "postgres pool nearly exhausted", Severity: core.SeverityWarn}, true
 	}
 }
 
@@ -92,31 +76,35 @@ func Recycling(prev, cur sql.DBStats) (core.Result, bool) {
 	if idleClosed == 0 && lifetimeClosed == 0 {
 		return core.Result{}, false
 	}
-
-	return core.Result{
-		Msg:   "postgres pool recycling connections",
-		Level: slog.LevelInfo,
-		Attrs: append([]any{
-			"idle_closed", idleClosed,
-			"lifetime_closed", lifetimeClosed,
-		}, poolAttrs(cur)...),
-	}, true
+	return core.Result{Msg: "postgres pool recycling connections", Severity: core.SeverityNotice}, true
 }
 
 // Healthy 总是认领，作为兜底输出 debug；放在默认顺序的最后。
-func Healthy(_, cur sql.DBStats) (core.Result, bool) {
-	return core.Result{
-		Msg:   "postgres pool healthy",
-		Level: slog.LevelDebug,
-		Attrs: poolAttrs(cur),
-	}, true
+func Healthy(_, _ sql.DBStats) (core.Result, bool) {
+	return core.Result{Msg: "postgres pool healthy", Severity: core.SeverityOK}, true
 }
 
-func poolAttrs(s sql.DBStats) []any {
-	return []any{
-		"open", s.OpenConnections,
-		"in_use", s.InUse,
-		"idle", s.Idle,
-		"max_open", s.MaxOpenConnections,
+// poolMetrics 把相邻两次快照摊成指标。它是这些数值的唯一产地：
+// 策略只说「发生了什么」，日志、将来的指标端点都从这份数据取。
+//
+// 没有新增等待时 avg_wait 记 0 而不是做除法——基线 tick 与空闲区间都走这条路。
+func poolMetrics(prev, cur sql.DBStats) []core.Metric {
+	waits := core.Delta(cur.WaitCount, prev.WaitCount)
+	waited := core.DurationDelta(cur.WaitDuration, prev.WaitDuration)
+	var avg time.Duration
+	if waits > 0 {
+		avg = waited / time.Duration(waits)
+	}
+
+	return []core.Metric{
+		{Name: "waits", Unit: core.UnitCount, Value: float64(waits)},
+		{Name: "waited", Unit: core.UnitSeconds, Value: waited.Seconds()},
+		{Name: "avg_wait", Unit: core.UnitSeconds, Value: avg.Seconds()},
+		{Name: "open", Unit: core.UnitCount, Value: float64(cur.OpenConnections)},
+		{Name: "in_use", Unit: core.UnitCount, Value: float64(cur.InUse)},
+		{Name: "idle", Unit: core.UnitCount, Value: float64(cur.Idle)},
+		{Name: "max_open", Unit: core.UnitCount, Value: float64(cur.MaxOpenConnections)},
+		{Name: "idle_closed", Unit: core.UnitCount, Value: float64(core.Delta(cur.MaxIdleClosed, prev.MaxIdleClosed))},
+		{Name: "lifetime_closed", Unit: core.UnitCount, Value: float64(core.Delta(cur.MaxLifetimeClosed, prev.MaxLifetimeClosed))},
 	}
 }

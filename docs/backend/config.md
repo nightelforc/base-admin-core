@@ -521,7 +521,7 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 - 迁移与 bootstrap 由 Job 执行：Job 期间 1 条连接，运行期为 0；连接账本里仍要给它留 1 条。
 - 连接串里带 `connect_timeout`，以及从 `app.name` 派生的会话标签（`Load` 时写入 `Database`，迁移 Job 追加 `-migrate`）；标签没有独立配置项，日志与 `pg_stat_activity` 里看到的是同一个名字，可以据此对账连接数、慢查询与锁等待。
 - `pkg/postgres.Open` 启动时输出 `postgres pool` 日志，包含 `max_open`、`max_idle` 与服务器的 `max_connections`、`superuser_reserved_connections`；单池就超过服务器可用连接时输出 warning。
-- 运行期由 `internal/monitor/pg` 的连接池监控项采样（由 `internal/monitor.Run` 统一注册，默认节拍 30 秒），只在需要时输出：出现等待是 `postgres pool waiting`（带 `waits`、`waited`、`avg_wait`），使用率达到 80% 是 `postgres pool nearly exhausted`，连接被回收是 `postgres pool recycling connections`，健康时是 debug。第一个采样只建基线、不做判定。`wait_count` 这类是累计值，日志里给的是本区间增量；多副本各记各的，PostgreSQL 侧没有对应视图。`pg.Checks(db, pg.Waiting)`（`db` 是 `*gorm.DB`）可以只保留关心的策略；「取快照 → 差分 → 走策略链」的通用实现是 `internal/monitor/core.Poll`。调度、判定顺序与扩展方式见 [monitor.md](monitor.md)。
+- 运行期由 `internal/monitor/pg` 的连接池监控项采样（由 `internal/monitor.Run` 统一注册，默认节拍 30 秒），日志只在需要时输出：出现等待是 `postgres pool waiting`，使用率达到 80% 是 `postgres pool nearly exhausted`，连接被回收是 `postgres pool recycling connections`，健康时是 debug。每次采样（包括只建基线、不做判定的第一个）都会产出九个指标：`waits`、`waited`、`avg_wait`、`open`、`in_use`、`idle`、`max_open`、`idle_closed`、`lifetime_closed`，基线的增量自然为 0。`wait_count` 这类是累计值，日志里给的是本区间增量；多副本各记各的，PostgreSQL 侧没有对应视图。`pg.Checks(db, pg.Waiting)`（`db` 是 `*gorm.DB`）可以只保留关心的策略；「取快照 → 差分 → 走策略链」的通用实现是 `internal/monitor/core.Poll`。调度、判定顺序与扩展方式见 [monitor.md](monitor.md)。
 - 生产环境建议在 ConfigMap/Secret 中显式设置 `DB_MAX_OPEN_CONNS`（以及需要时的 `DB_MAX_IDLE_CONNS`），不要依赖模板默认值。
 
 ## 7. 常见问题
