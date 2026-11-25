@@ -23,12 +23,6 @@ import (
 	"github.com/nightelforc/base-admin-core/backend/internal/monitor/pg"
 )
 
-// Check 与 Result 是监控项契约的别名，调用方只 import 本包也能写监控项。
-type (
-	Check  = core.Check
-	Result = core.Result
-)
-
 // Deps 是调用方能提供的运行时依赖。
 //
 // 收 *gorm.DB 而不是 *sql.DB：调用方只递它手上有的东西。字段为 nil 时对应来源

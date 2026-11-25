@@ -369,6 +369,8 @@ func (c *Config) Location() *time.Location {
 //
 // 返回值里没有秘密：口令与 JWT 密钥一律不出现，连长度也不报——长度足以反推弱密钥。
 // 唯一与密钥有关的键是 secrets.from_files，它只列"哪些项走了文件注入"的变量名。
+//
+// 新增配置字段时必须在这里补一行：这份视图是手工维护的，没有任何测试能替你发现漏项。
 func (c *Config) Summary() map[string]any {
 	// 0 表示"未设置/关闭"，写 0s 容易被误读成零超时，因此单独标注。
 	off := func(d time.Duration) string {

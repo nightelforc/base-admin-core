@@ -50,7 +50,7 @@ func (r *Registry) Add(checks ...Check) {
 	}
 }
 
-// Checks 返回已注册监控项的副本，供 /metrics 之类的出口遍历。
+// Checks 返回已注册监控项的副本。快照而不是原地返回，避免调用方改动内部切片。
 func (r *Registry) Checks() []Check {
 	r.mu.Lock()
 	defer r.mu.Unlock()
