@@ -307,6 +307,7 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | `database.connect_timeout` | `DB_CONNECT_TIMEOUT`（必须是整秒） |
 | `database.ping_timeout` | `DB_PING_TIMEOUT`（必须是整秒；0 表示默认 10s） |
 | `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
+| `redis.pool_timeout` | `REDIS_POOL_TIMEOUT`（必须为正） |
 | `jwt.secret` | `JWT_SECRET`，或 `JWT_SECRET_FILE=<路径>` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
 
@@ -401,6 +402,7 @@ func (c *Config) Validate() error {
 | Redis 建连超时必须短于请求超时 | `REDIS_DIAL_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
 | Redis 读 + 写超时之和必须短于请求超时（一次调用最坏情况） | `REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
 | Redis 建连超时不得大于读超时 | `REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT` |
+| Redis 取连接超时必须为正（不允许依赖驱动的推导值） | `REDIS_POOL_TIMEOUT must be positive` |
 | HTTP 请求体上限必须为正 | `HTTP_MAX_BODY_BYTES must be positive` |
 | HTTP/Redis 关键超时、登录窗口、封禁时长必须为正 | `HTTP_READ_TIMEOUT must be positive` |
 | `HTTP_IDLE_TIMEOUT` 不能为负（0 合法，回退到 `ReadTimeout`） | `HTTP_IDLE_TIMEOUT must not be negative` |
@@ -527,6 +529,18 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 - `pkg/postgres.Open` 启动时输出 `postgres pool` 日志，包含 `max_open`、`max_idle` 与服务器的 `max_connections`、`superuser_reserved_connections`；单池就超过服务器可用连接时输出 warning。
 - 运行期由 `internal/monitor/pg` 的连接池监控项采样（由 `internal/monitor.Run` 统一注册，默认节拍 30 秒），日志只在需要时输出：出现等待是 `postgres pool waiting`，使用率达到 80% 是 `postgres pool nearly exhausted`，连接被回收是 `postgres pool recycling connections`，健康时是 debug。每次采样（包括只建基线、不做判定的第一个）都会产出九个指标：`waits`、`waited`、`avg_wait`、`open`、`in_use`、`idle`、`max_open`、`idle_closed`、`lifetime_closed`，基线的增量自然为 0。`wait_count` 这类是累计值，日志里给的是本区间增量；多副本各记各的，PostgreSQL 侧没有对应视图。`pg.Checks(db, pg.Waiting)`（`db` 是 `*gorm.DB`）可以只保留关心的策略；「取快照 → 差分 → 走策略链」的通用实现是 `internal/monitor/core.Poll`。调度、判定顺序与扩展方式见 [monitor.md](monitor.md)。
 - 生产环境建议在 ConfigMap/Secret 中显式设置 `DB_MAX_OPEN_CONNS`（以及需要时的 `DB_MAX_IDLE_CONNS`），不要依赖模板默认值。
+
+### 6.5 Redis 的四段超时，以及重试的乘法
+
+`redis.dial_timeout` / `read_timeout` / `write_timeout` 都描述**一条连接内部**：分别管 TCP 建连、读响应、写请求。池满时请求还有一段"在池门外排队"，由 `redis.pool_timeout` 管（必须为正；不配时 go-redis 会推导成 `read_timeout + 1s`，值随读超时漂移，所以这里不给零值语义）。
+
+这段排队会被重试放大：go-redis 默认 `MaxRetries=3`（即最多 4 次尝试），且**池超时被明确列为可重试错误**。于是单条命令的最坏耗时是
+
+```text
+(MaxRetries + 1) × (pool_timeout + read_timeout) + 退避
+```
+
+按本模板默认值（1s + 3s、4 次尝试）约 16 秒；若沿用驱动的隐式 `pool_timeout`（4s），则是 28 秒——已经逼近 `http.request_timeout`，池满时会表现为一个看不出原因的 504。所以池满场景要观察的是 `pool_timeout`、`max_retries` 与请求预算三者之间的关系，而不只是池容量。
 
 ## 7. 常见问题
 

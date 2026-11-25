@@ -34,6 +34,11 @@ type Redis struct {
 	WriteTimeout time.Duration `env:"WRITE_TIMEOUT" yaml:"write_timeout"`
 	PoolSize     int           `env:"POOL_SIZE" validate:"min=1" yaml:"pool_size"`
 
+	// PoolTimeout 限制"从池里取一条连接"最多等多久。它和上面三个超时不是一类：
+	// dial/read/write 管一条连接内部，它管池满时的排队。零值会让 go-redis 推导成
+	// ReadTimeout+1s，实际值随读超时漂移，所以这里要求显式给出正值。
+	PoolTimeout time.Duration `env:"POOL_TIMEOUT" yaml:"pool_timeout"`
+
 	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
 	RouteByLatency bool `env:"ROUTE_BY_LATENCY" yaml:"route_by_latency"`
 	RouteRandomly  bool `env:"ROUTE_RANDOMLY" yaml:"route_randomly"`
@@ -95,6 +100,7 @@ func (r Redis) validate() problems {
 		{"REDIS_DIAL_TIMEOUT", r.DialTimeout},
 		{"REDIS_READ_TIMEOUT", r.ReadTimeout},
 		{"REDIS_WRITE_TIMEOUT", r.WriteTimeout},
+		{"REDIS_POOL_TIMEOUT", r.PoolTimeout},
 	} {
 		if item.value <= 0 {
 			p.addf("%s must be positive", item.name)
@@ -122,6 +128,7 @@ func (r Redis) Options() redis.Options {
 		ReadTimeout:      r.ReadTimeout,
 		WriteTimeout:     r.WriteTimeout,
 		PoolSize:         r.PoolSize,
+		PoolTimeout:      r.PoolTimeout,
 		RouteByLatency:   r.RouteByLatency,
 		RouteRandomly:    r.RouteRandomly,
 		TLS: redis.TLSOptions{

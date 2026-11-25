@@ -114,6 +114,38 @@ func TestNewClientSentinelBuildsClient(t *testing.T) {
 	}
 }
 
+func TestNewClientCarriesPoolTimeout(t *testing.T) {
+	// 两种模式都要传：漏一处就会让那条路径悄悄回落到驱动的推导值
+	// （read_timeout + 1s），而配置里写的是别的数。
+	const poolTimeout = 750 * time.Millisecond
+
+	for _, tc := range []struct {
+		name string
+		opts Options
+	}{
+		{
+			name: "standalone",
+			opts: Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}, PoolTimeout: poolTimeout},
+		},
+		{
+			name: "sentinel",
+			opts: Options{Mode: ModeSentinel, MasterName: "mymaster", Addrs: []string{"127.0.0.1:26379"}, PoolTimeout: poolTimeout},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := newClient(tc.opts)
+			if err != nil {
+				t.Fatalf("newClient() 返回错误: %v", err)
+			}
+			defer client.Close()
+
+			if got := client.Options().PoolTimeout; got != poolTimeout {
+				t.Fatalf("PoolTimeout = %v, want %v", got, poolTimeout)
+			}
+		})
+	}
+}
+
 func TestNewClientTLSDisabledByDefault(t *testing.T) {
 	client, err := newClient(Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}})
 	if err != nil {

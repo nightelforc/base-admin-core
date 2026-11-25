@@ -449,6 +449,7 @@ func (c *Config) Summary() map[string]any {
 		"redis.read_timeout":     off(c.Redis.ReadTimeout),
 		"redis.write_timeout":    off(c.Redis.WriteTimeout),
 		"redis.pool_size":        c.Redis.PoolSize,
+		"redis.pool_timeout":     off(c.Redis.PoolTimeout),
 		"redis.route_by_latency": c.Redis.RouteByLatency,
 		"redis.route_randomly":   c.Redis.RouteRandomly,
 		"redis.tls_enabled":      c.Redis.TLSEnabled,

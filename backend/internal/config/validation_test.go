@@ -49,7 +49,7 @@ database:
 	}
 }
 
-// TestValidateRedisTimeoutsAgainstRequestBudget 覆盖三条 Redis 超时预算规则。
+// TestValidateRedisTimeoutsAgainstRequestBudget 覆盖四条 Redis 超时规则。
 // 每条都用独立的子测试，避免一处配置同时踩两条规则而看不出是哪条在生效。
 func TestValidateRedisTimeoutsAgainstRequestBudget(t *testing.T) {
 	for _, tc := range []struct {
@@ -89,6 +89,14 @@ redis:
   read_timeout: 2s
 `,
 			want: "REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT",
+		},
+		{
+			name: "pool timeout must be positive",
+			value: `
+redis:
+  pool_timeout: 0s
+`,
+			want: "REDIS_POOL_TIMEOUT must be positive",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

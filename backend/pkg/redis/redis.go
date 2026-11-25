@@ -104,6 +104,11 @@ type Options struct {
 	WriteTimeout time.Duration
 	// PoolSize 限制连接池的最大连接数。为零时 go-redis 依据 GOMAXPROCS 自动决定。
 	PoolSize int
+	// PoolTimeout 限制"从池里取一条连接"最多等多久。它既不是建连时间
+	// （DialTimeout），也不是命令执行时间（Read/WriteTimeout），而是池满时请求
+	// 排队的地方。零值交给 go-redis 推导（ReadTimeout + 1s），实际值会随读超时
+	// 漂移，所以配置层要求显式给出正值。
+	PoolTimeout time.Duration
 
 	// RouteByLatency 与 RouteRandomly 只对哨兵模式下的读流量有意义：
 	// 开启后 go-redis 会把只读命令发往从节点。
@@ -211,6 +216,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			ReadTimeout:  opts.ReadTimeout,
 			WriteTimeout: opts.WriteTimeout,
 			PoolSize:     opts.PoolSize,
+			PoolTimeout:  opts.PoolTimeout,
 			TLSConfig:    tlsCfg,
 		}), nil
 
@@ -233,6 +239,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			ReadTimeout:      opts.ReadTimeout,
 			WriteTimeout:     opts.WriteTimeout,
 			PoolSize:         opts.PoolSize,
+			PoolTimeout:      opts.PoolTimeout,
 			RouteByLatency:   opts.RouteByLatency,
 			RouteRandomly:    opts.RouteRandomly,
 			// go-redis 的 FailoverOptions 只有一个 TLSConfig，哨兵连接与数据连接
