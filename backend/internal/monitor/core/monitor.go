@@ -1,4 +1,4 @@
-// Package core 是监控框架的契约与调度实现：Result、Check、Registry。
+// Package core 是监控框架的契约与调度实现：Result、CheckState、Check、Registry。
 //
 // 它不认识任何具体组件，也不负责「开哪些检查」——那是上层 package monitor 的
 // 策略。之所以单独成包：监控项的实现（monitor/pg 等）需要引用这里的类型，

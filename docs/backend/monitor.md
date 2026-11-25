@@ -72,7 +72,9 @@ type Check interface {
 
 ### 2.3 `core.Registry`
 
-只做三件事：按名字去重注册（`Add` 对 nil、空名、重名直接 panic，接线错误要在启动时暴露）、给每个监控项起一个 goroutine 并按间隔采样（`Run`）、把 `Result` 写进日志（`fire`，带 `recover`）。
+做四件事：按名字去重注册（`Add` 对 nil、空名、重名直接 panic，接线错误要在启动时暴露）、给每个监控项起一个 goroutine 并按间隔采样（`Run`）、把每次采样记进最近状态（`record`）、把需要记的 `Result` 写进日志（`fire`，带 `recover`）。
+
+记录发生在日志之前，所以「健康」也有数据：日志只输出 `Msg` 非空的采样，状态缓存保留每一次。`Snapshot()` 返回 `core.Snapshot`——实例标识（hostname/pid）加上按名字排序的 `[]core.CheckState`（含从未采样过的项），每次调用给的是副本；超过 3 个周期没有新样本的项标成 `Stale`，严重度置为 `Unknown`，原来的判定留在 `Message` 里。
 
 它不认识任何具体组件，也不决定「开哪些检查」。
 
@@ -134,6 +136,7 @@ if cfg.Monitor.Enabled {
 - **ticker 不漂移**：采样慢于间隔时丢样本而不是错位（`time.Ticker` 通道容量为 1，错过即丢）。因此相位承诺在慢采样下依然成立。
 - 一个采样卡住只影响它自己（每个检查独立 goroutine），但会静默地少采几次——目前没有单次采样超时，见 §9。
 - 每个检查的 `Sample` 在自己的 goroutine 里串行调用，实现不需要考虑并发。
+- **每次采样都留状态**：`Msg` 为空的健康采样不写日志，但照样进 `Registry` 的状态缓存——日志是事件，状态才是「现在怎么样」。
 - `ctx` 取消后所有采样协程退出，`Run` 返回。
 
 ## 5. 判定策略（PostgreSQL 连接池）
@@ -206,7 +209,7 @@ if cfg.Monitor.Enabled {
 
 监控目前只有**日志**这一条出口。日志是事件流，回答不了「此刻连接池是什么样」；要做「后台可看的监控页面」，本质是一个前后端模块，不是一次小改动，因此暂缓，留作 TODO：
 
-- **状态缓存与读出口**：`Registry` 保存每个检查最近一次 `Result`（采样时间、级别、字段），提供读取入口。
+- **读出口**：状态层已经有了——`Registry.Snapshot()` 返回 `core.Snapshot`（实例标识 + 每个检查的 `CheckState`：严重度、消息、指标、采样时间、是否陈旧），缺的是把它暴露出去的那一层。
   - 注意读操作**不能直接调 `Sample`**：`Poll` 的判定基于相邻快照的增量，额外采样会消耗掉本区间的增量，页面刷新会改变日志行为。
   - 出口形态待定：`/debug/monitor`（仅内网/管理员）还是管理后台页面（要走权限体系 `system:monitor:list`）。
 - **指标导出**：把同样的 `Result` 投影成 Prometheus 指标（`counter`/`gauge`），与日志共用采样，不重复采集。
@@ -220,11 +223,12 @@ if cfg.Monitor.Enabled {
 | --- | --- |
 | `internal/monitor/monitor.go` | 入口：`Deps`、`sources` 表、`Run`、`checks` |
 | `internal/monitor/core/monitor.go` | `DefaultInterval`、`Severity`、`Unit`、`Metric`、`Result`、`Check` |
-| `internal/monitor/core/registry.go` | `Registry`：注册、调度、panic 隔离、输出 |
+| `internal/monitor/core/registry.go` | `Registry`：注册、调度、状态缓存、panic 隔离、输出 |
 | `internal/monitor/core/poll.go` | `Poll[T]`、`Strategy[T]`、`Delta`、`DurationDelta` |
+| `internal/monitor/core/state.go` | `CheckState`、`Instance`、`Snapshot`：最近一次采样与陈旧判定 |
 | `internal/monitor/pg/pg.go` | 连接池监控项与四条默认策略 |
 | `internal/config/monitor.go` | `monitor.enabled` 开关 |
 
-测试共 31 个：`core` 14 个（注册表 9 + `Poll` 5）、`pg` 12 个（策略纯函数、边界、默认顺序、指标形状、真实 `Poll` 的增量判定、句柄不可用）、`monitor` 5 个（装配、空依赖、一路失败不影响其他路、无事可做时不起协程）。
+测试共 39 个：`core` 22 个（注册表 9 + `Poll` 5 + 状态 8）、`pg` 12 个（策略纯函数、边界、默认顺序、指标形状、真实 `Poll` 的增量判定、句柄不可用）、`monitor` 5 个（装配、空依赖、一路失败不影响其他路、无事可做时不起协程）。
 
 运行方式：`go test ./internal/monitor/...`。
