@@ -176,6 +176,61 @@ func TestNewClientCarriesMaxRetries(t *testing.T) {
 	}
 }
 
+func TestNewClientCarriesConnMaxTimes(t *testing.T) {
+	// 两个字段都是纯透传，但要两种模式各验一遍：漏传一处，那条路径就会回落到
+	// 驱动默认（空闲 30 分钟、寿命不限），而配置里写的是别的数。
+	const (
+		idle     = 10 * time.Minute
+		lifetime = 45 * time.Minute
+	)
+
+	for _, tc := range []struct {
+		name string
+		opts Options
+	}{
+		{
+			name: "standalone",
+			opts: Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}, ConnMaxIdleTime: idle, ConnMaxLifetime: lifetime},
+		},
+		{
+			name: "sentinel",
+			opts: Options{Mode: ModeSentinel, MasterName: "mymaster", Addrs: []string{"127.0.0.1:26379"}, ConnMaxIdleTime: idle, ConnMaxLifetime: lifetime},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := newClient(tc.opts)
+			if err != nil {
+				t.Fatalf("newClient() 返回错误: %v", err)
+			}
+			defer client.Close()
+
+			if got := client.Options().ConnMaxIdleTime; got != idle {
+				t.Fatalf("ConnMaxIdleTime = %v, want %v", got, idle)
+			}
+			if got := client.Options().ConnMaxLifetime; got != lifetime {
+				t.Fatalf("ConnMaxLifetime = %v, want %v", got, lifetime)
+			}
+		})
+	}
+}
+
+func TestNewClientDefaultsIdleTimeToThirtyMinutes(t *testing.T) {
+	// 零值不是"不回收"：驱动会把它归一化成 30 分钟。配置层因此要求显式给出正值，
+	// 这里锁住驱动这一侧的语义，避免有人以为传 0 就关掉了回收。
+	client, err := newClient(Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}})
+	if err != nil {
+		t.Fatalf("newClient() 返回错误: %v", err)
+	}
+	defer client.Close()
+
+	if got := client.Options().ConnMaxIdleTime; got != 30*time.Minute {
+		t.Fatalf("ConnMaxIdleTime = %v, want 30m", got)
+	}
+	if got := client.Options().ConnMaxLifetime; got != 0 {
+		t.Fatalf("ConnMaxLifetime = %v, want 0（不过期）", got)
+	}
+}
+
 func TestNewClientTLSDisabledByDefault(t *testing.T) {
 	client, err := newClient(Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}})
 	if err != nil {

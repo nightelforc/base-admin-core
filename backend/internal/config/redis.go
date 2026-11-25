@@ -45,6 +45,19 @@ type Redis struct {
 	// 所以下面还有一条与请求预算挂钩的校验。
 	MaxRetries int `env:"MAX_RETRIES" validate:"min=0" yaml:"max_retries"`
 
+	// ConnMaxIdleTime 是一条连接被回收前的最大空闲时长。go-redis 的默认值是 30 分钟，
+	// 而链路上的负载均衡/NAT 往往更早地把空闲连接丢掉：驱动在取连接时会做一次探测，
+	// 能识别对端已发 FIN 的死连接，但识别不了被中间设备静默丢弃的半开连接——那种连接
+	// 上的第一条命令要等满 read_timeout 才失败。把空闲阈值压到设备的空闲断开阈值以下，
+	// 这类概率就降到接近零。回收是惰性的，只在取连接时顺手判断，不占后台资源。
+	ConnMaxIdleTime time.Duration `env:"CONN_MAX_IDLE_TIME" yaml:"conn_max_idle_time"`
+
+	// ConnMaxLifetime 是一条连接的最大存活时间，0 表示永不过期。它限制"活了多久"，
+	// 与上面的"闲了多久"是两件事；只在 DNS/VIP 漂移、或想周期性摆脱长连接时才需要。
+	// 设成非零值后同批连接会在同一时刻到期，驱动有 ConnMaxLifetimeJitter 用来错开，
+	// 本模板暂未暴露（见 docs/backend/config.md §6.6）。
+	ConnMaxLifetime time.Duration `env:"CONN_MAX_LIFETIME" yaml:"conn_max_lifetime"`
+
 	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
 	RouteByLatency bool `env:"ROUTE_BY_LATENCY" yaml:"route_by_latency"`
 	RouteRandomly  bool `env:"ROUTE_RANDOMLY" yaml:"route_randomly"`
@@ -107,10 +120,16 @@ func (r Redis) validate() problems {
 		{"REDIS_READ_TIMEOUT", r.ReadTimeout},
 		{"REDIS_WRITE_TIMEOUT", r.WriteTimeout},
 		{"REDIS_POOL_TIMEOUT", r.PoolTimeout},
+		{"REDIS_CONN_MAX_IDLE_TIME", r.ConnMaxIdleTime},
 	} {
 		if item.value <= 0 {
 			p.addf("%s must be positive", item.name)
 		}
+	}
+	// 空闲阈值不允许关闭（0 在驱动里等于"用默认 30 分钟"，语义含糊），存活时间
+	// 允许 0：它表达"连接永不过期"，这正是驱动的默认行为。
+	if r.ConnMaxLifetime < 0 {
+		p.add("REDIS_CONN_MAX_LIFETIME must not be negative")
 	}
 	return p
 }
@@ -143,6 +162,8 @@ func (r Redis) Options() redis.Options {
 		PoolSize:         r.PoolSize,
 		PoolTimeout:      r.PoolTimeout,
 		MaxRetries:       maxRetries,
+		ConnMaxIdleTime:  r.ConnMaxIdleTime,
+		ConnMaxLifetime:  r.ConnMaxLifetime,
 		RouteByLatency:   r.RouteByLatency,
 		RouteRandomly:    r.RouteRandomly,
 		TLS: redis.TLSOptions{

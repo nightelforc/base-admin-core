@@ -119,6 +119,20 @@ type Options struct {
 	// 预算校验把它和 HTTP_REQUEST_TIMEOUT 绑在一起。
 	MaxRetries int
 
+	// ConnMaxIdleTime 是连接被判定为空闲过久、可以回收之前的时长。零值交给
+	// go-redis 推导（30 分钟），而驱动的默认值通常长于链路上负载均衡/NAT 的
+	// 空闲断开阈值，所以要压到那个阈值以下只能显式配置。
+	//
+	// 回收是惰性的：没有后台扫描，只在取连接时顺手判断。被回收的连接下一次
+	// 需要重新拨号（TLS 还要握手）。
+	ConnMaxIdleTime time.Duration
+
+	// ConnMaxLifetime 是一条连接的最大存活时间，零值表示永不过期。它和
+	// ConnMaxIdleTime 是两件事：前者限制"活了多久"，后者限制"闲了多久"。
+	// 设置非零值时，同一批连接会在同一时刻到期，需要错开时用驱动提供的
+	// ConnMaxLifetimeJitter（本包暂未暴露，见 docs/backend/config.md §6.6）。
+	ConnMaxLifetime time.Duration
+
 	// RouteByLatency 与 RouteRandomly 只对哨兵模式下的读流量有意义：
 	// 开启后 go-redis 会把只读命令发往从节点。
 	RouteByLatency bool
@@ -227,7 +241,10 @@ func newClient(opts Options) (*goredis.Client, error) {
 			PoolSize:     opts.PoolSize,
 			PoolTimeout:  opts.PoolTimeout,
 			MaxRetries:   opts.MaxRetries,
-			TLSConfig:    tlsCfg,
+
+			ConnMaxIdleTime: opts.ConnMaxIdleTime,
+			ConnMaxLifetime: opts.ConnMaxLifetime,
+			TLSConfig:       tlsCfg,
 		}), nil
 
 	case ModeSentinel:
@@ -251,6 +268,8 @@ func newClient(opts Options) (*goredis.Client, error) {
 			PoolSize:         opts.PoolSize,
 			PoolTimeout:      opts.PoolTimeout,
 			MaxRetries:       opts.MaxRetries,
+			ConnMaxIdleTime:  opts.ConnMaxIdleTime,
+			ConnMaxLifetime:  opts.ConnMaxLifetime,
 			RouteByLatency:   opts.RouteByLatency,
 			RouteRandomly:    opts.RouteRandomly,
 			// go-redis 的 FailoverOptions 只有一个 TLSConfig，哨兵连接与数据连接

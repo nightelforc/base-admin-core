@@ -110,6 +110,24 @@ redis:
 `,
 			want: "(REDIS_MAX_RETRIES + 1) x (REDIS_POOL_TIMEOUT + REDIS_READ_TIMEOUT) must be shorter than HTTP_REQUEST_TIMEOUT",
 		},
+		{
+			// 0 在驱动里等于"用默认 30 分钟"，语义和"关掉回收"不是一回事，所以
+			// 配置层不接受它，避免 Summary 里看着像关闭、实际仍在回收。
+			name: "idle time cannot be used to disable recycling",
+			value: `
+redis:
+  conn_max_idle_time: 0s
+`,
+			want: "REDIS_CONN_MAX_IDLE_TIME must be positive",
+		},
+		{
+			name: "lifetime cannot be negative",
+			value: `
+redis:
+  conn_max_lifetime: -1s
+`,
+			want: "REDIS_CONN_MAX_LIFETIME must not be negative",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeConfig(t, tc.value)

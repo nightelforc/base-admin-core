@@ -104,6 +104,13 @@ redis:
   # 一条命令的最坏耗时 ≈ (max_retries+1)×(pool_timeout+read_timeout)，
   # 必须短于 http.request_timeout。
   max_retries: 1                      # L2
+  # 空闲多久后回收连接。go-redis 默认 30 分钟，通常长于 NLB/Azure LB/SLB 的
+  # 空闲断开阈值；把这些设备丢掉、又没发 FIN 的半开连接挡在复用之外，靠的是
+  # 它比设备阈值更短。回收是惰性的，下一次使用才重新拨号（TLS 还要握手）。
+  conn_max_idle_time: 30m             # L2 必须为正
+  # 一条连接的最大存活时间，0 表示永不过期。只在 DNS/VIP 漂移或想周期性换新
+  # 连接时才设置；设了之后同批连接会同刻到期（驱动的 jitter 本模板暂未暴露）。
+  conn_max_lifetime: 0s               # L2 0 表示不限制
   route_by_latency: false             # L2 仅哨兵模式：只读命令按延迟路由到从节点
   route_randomly: false               # L2 仅哨兵模式：只读命令随机路由到从节点
   tls_enabled: false                  # L2 开启传输加密；其余 tls_* 仅在开启后生效

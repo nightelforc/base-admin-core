@@ -309,6 +309,8 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
 | `redis.pool_timeout` | `REDIS_POOL_TIMEOUT`（必须为正） |
 | `redis.max_retries` | `REDIS_MAX_RETRIES`（0 表示不重试） |
+| `redis.conn_max_idle_time` | `REDIS_CONN_MAX_IDLE_TIME`（必须为正，不能用来关闭回收） |
+| `redis.conn_max_lifetime` | `REDIS_CONN_MAX_LIFETIME`（0 表示永不过期） |
 | `jwt.secret` | `JWT_SECRET`，或 `JWT_SECRET_FILE=<路径>` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
 
@@ -405,6 +407,8 @@ func (c *Config) Validate() error {
 | Redis 建连超时不得大于读超时 | `REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT` |
 | Redis 取连接超时必须为正（不允许依赖驱动的推导值） | `REDIS_POOL_TIMEOUT must be positive` |
 | Redis 重试预算必须落在请求超时内 | `(REDIS_MAX_RETRIES + 1) x (REDIS_POOL_TIMEOUT + REDIS_READ_TIMEOUT) must be shorter than HTTP_REQUEST_TIMEOUT` |
+| Redis 空闲回收阈值必须为正 | `REDIS_CONN_MAX_IDLE_TIME must be positive` |
+| Redis 连接寿命不得为负 | `REDIS_CONN_MAX_LIFETIME must not be negative` |
 | HTTP 请求体上限必须为正 | `HTTP_MAX_BODY_BYTES must be positive` |
 | HTTP/Redis 关键超时、登录窗口、封禁时长必须为正 | `HTTP_READ_TIMEOUT must be positive` |
 | `HTTP_IDLE_TIMEOUT` 不能为负（0 合法，回退到 `ReadTimeout`） | `HTTP_IDLE_TIMEOUT must not be negative` |
@@ -547,6 +551,32 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 配置层的 `0` 表示**不重试**：驱动用 `-1` 表达关闭、用 `0` 表达"使用默认 3 次"，这个反直觉的约定只在 `Redis.Options()` 里翻译一次。另外启动时会校验 `(max_retries+1) × (pool_timeout + read_timeout) < http.request_timeout`，所以把重试个数调大不会悄悄吃掉请求预算——它会直接拒绝启动。
 
 重试对**非幂等命令**不是免费的：命令在服务端已执行、响应在返回路上丢失（EOF 或读超时）时，重试会再执行一次。本服务里受影响的是登录限流的 `INCR`（计数可能偏大一次），其余用法（`SET`、`EXPIRE`、`SMEMBERS`、`DEL`）都是幂等的。所以池满场景要观察的不只是池容量，还有 `pool_timeout`、`max_retries` 与请求预算三者之间的关系。
+
+### 6.6 Redis 连接回收：闲多久、活多久
+
+`redis.conn_max_idle_time` 与 `redis.conn_max_lifetime` 是两件不同的事：前者限制"闲了多久"，后者限制"活了多久"。默认值分别是 30 分钟与不限（0）。
+
+驱动在**取连接时**才做判断（`internal/pool` 的 `isHealthyConn`）：先看寿命、再看空闲时长，最后对 socket 做一次非阻塞读探测。不健康就关掉换一条，所以**回收是惰性的**，没有后台扫描器，也不需要额外配置节流。
+
+这也决定了这两个参数各自解决什么问题：
+
+- 对端已经发了 FIN 的死连接，探测能直接发现，会被静默换掉，请求无感——不需要靠这两个参数兜底。
+- 中间设备（NAT、负载均衡）**静默丢弃**、没发 FIN 的半开连接，探测发现不了：第一条命令会写成功、读等到 `read_timeout` 才失败，再触发重试。这才是 `conn_max_idle_time` 要压的东西。
+
+要压的话，阈值必须小于链路上的空闲断开时间：
+
+| 部署位置 | 典型空闲断开阈值 |
+| --- | --- |
+| AWS NLB | 350 秒 |
+| Azure LB | 240 秒（可调 4–30 分钟） |
+| 阿里云 SLB | 900 秒（默认） |
+| Linux conntrack（established） | 5 天 |
+
+驱动的默认值 30 分钟比前三个都长，所以"服务前面有负载均衡、且连接会长时间空闲"时，把它调到 5 分钟左右是有意义的；反过来，如果请求持续不断、池里的连接根本闲不下来，改它几乎没有效果。
+
+代价是回收之后的第一次使用要重新拨号（开启 TLS 还要握手），所以不宜调得过小。
+
+`conn_max_lifetime` 只在 DNS/VIP 漂移、或想周期性甩掉长连接时才有意义，默认保持 0。设成非零值后，同一批连接会在同一时刻到期，驱动提供了 `ConnMaxLifetimeJitter` 来错开，本模板暂未暴露——需要时再加。`conn_max_idle_time` 不接受 0：0 在驱动里等于"使用默认 30 分钟"，与本模板"不给零值语义"的约定冲突，会显得像关闭了回收而实际没有。
 
 ## 7. 常见问题
 
