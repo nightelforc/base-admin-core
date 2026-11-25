@@ -44,6 +44,12 @@ type Database struct {
 	// 握手与认证，那两段仍受调用方 ctx 约束。
 	ConnectTimeout time.Duration `env:"CONNECT_TIMEOUT" yaml:"connect_timeout"`
 
+	// PingTimeout 限制启动时那次连通性验证。它与 ConnectTimeout 不是一回事：
+	// ConnectTimeout 管每个新连接的 TCP 建连，PingTimeout 管"这次验证最多等多久"。
+	// 0 表示使用 postgres 包的默认值（10s）。建连可能比它慢，所以校验要求它不短于
+	// ConnectTimeout——否则一次健康的建连也会被判失败。
+	PingTimeout time.Duration `env:"PING_TIMEOUT" yaml:"ping_timeout"`
+
 	// sessionLabel 不是配置项：它由 Load 从 app.name 派生后写入，没有 yaml/env tag，
 	// 外部无法单独设置。日志里的 app 字段与 pg_stat_activity.application_name 因此
 	// 必然同名，排查时不需要先对表。
@@ -78,7 +84,24 @@ func (d Database) validate() problems {
 	if d.ConnectTimeout > 0 && d.ConnectTimeout%time.Second != 0 {
 		p.add("DB_CONNECT_TIMEOUT must be a whole number of seconds (pgx reads it as integer seconds)")
 	}
+	if d.PingTimeout < 0 {
+		p.add("DB_PING_TIMEOUT must not be negative")
+	}
+	// 0 会被 postgres 包折算成默认值，这里比较的是折算后的值，否则「没配 ping」会被
+	// 误判成「比 connect 短」。
+	if d.ConnectTimeout > 0 && d.PingTimeoutOf() < d.ConnectTimeout {
+		p.add("DB_PING_TIMEOUT must not be shorter than DB_CONNECT_TIMEOUT")
+	}
 	return p
+}
+
+// PingTimeoutOf 返回实际生效的 ping 预算：零值折算成 postgres 包的默认值。
+// 校验与 Summary 都用它，避免"配 0 显示 off，实际却是 10s"。
+func (d Database) PingTimeoutOf() time.Duration {
+	if d.PingTimeout > 0 {
+		return d.PingTimeout
+	}
+	return postgres.DefaultPingTimeout
 }
 
 // MigrateDSN 是迁移 Job 的连接串：不含语句超时（大表的 DDL 可能合法地跑过应用
@@ -153,5 +176,6 @@ func (d Database) Options() postgres.Options {
 		ConnMaxIdleTime:    d.ConnMaxIdleTime,
 		LogLevel:           d.LogLevel,
 		SlowQueryThreshold: d.SlowQueryThreshold,
+		PingTimeout:        d.PingTimeout,
 	}
 }

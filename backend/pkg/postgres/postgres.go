@@ -34,8 +34,29 @@ type Options struct {
 	LogLevel string
 	// SlowQueryThreshold 把慢于该阈值的语句标为警告。
 	SlowQueryThreshold time.Duration
+	// PingTimeout 限制启动时那次连通性验证。它与连接串里的 connect_timeout 是两段：
+	// 后者管每个新连接的 TCP 建连，前者管"这次验证最多等多久"。零值回落到
+	// DefaultPingTimeout。
+	PingTimeout time.Duration
 	// Logger 接收 GORM 的语句日志；为 nil 时回落到 slog.Default。
 	Logger *slog.Logger
+}
+
+const (
+	// DefaultPingTimeout 是 Options.PingTimeout 的零值回落值。
+	DefaultPingTimeout = 10 * time.Second
+
+	// capacityTimeout 给启动时的容量查询一段独立预算。它是诊断查询，失败只记 debug，
+	// 不该吃掉 ping 剩下的时间，也不该因为 ping 恰好用满而被取消。
+	capacityTimeout = 2 * time.Second
+)
+
+// pingTimeoutOf 把零值折算成默认值，让调用方与校验方看到同一个数。
+func pingTimeoutOf(opts Options) time.Duration {
+	if opts.PingTimeout > 0 {
+		return opts.PingTimeout
+	}
+	return DefaultPingTimeout
 }
 
 // Open 通过 GORM 连接 PostgreSQL，并应用连接池限制、表前缀以及基于 slog 的语句日志器。
@@ -75,14 +96,16 @@ func Open(ctx context.Context, opts Options) (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(opts.ConnMaxLifetime)
 	sqlDB.SetConnMaxIdleTime(opts.ConnMaxIdleTime)
 
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, pingTimeoutOf(opts))
 	defer cancel()
 	if err := sqlDB.PingContext(pingCtx); err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	logConnectionCapacity(pingCtx, sqlDB, log, opts)
+	capacityCtx, cancelCapacity := context.WithTimeout(ctx, capacityTimeout)
+	defer cancelCapacity()
+	logConnectionCapacity(capacityCtx, sqlDB, log, opts)
 
 	return gormDB, nil
 }

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/nightelforc/base-admin-core/backend/pkg/postgres"
 )
 
 func TestDatabaseAppDSNAddsStatementTimeout(t *testing.T) {
@@ -140,6 +142,54 @@ func TestDatabaseValidateRejectsBadConnectTimeout(t *testing.T) {
 				t.Fatalf("validate() = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestDatabaseValidateRejectsBadPingTimeout(t *testing.T) {
+	db := Database{PingTimeout: -time.Second}
+	err := db.validate().err()
+	if err == nil || !strings.Contains(err.Error(), "DB_PING_TIMEOUT must not be negative") {
+		t.Fatalf("validate() = %v, want it to reject a negative ping timeout", err)
+	}
+}
+
+func TestDatabaseValidateRejectsPingShorterThanConnect(t *testing.T) {
+	// 建连本身要花 connect 那么久，ping 比它短就注定失败：健康的库也会被判连不上。
+	for _, tc := range []struct {
+		name    string
+		connect time.Duration
+		ping    time.Duration
+		want    bool
+	}{
+		{name: "ping shorter than connect", connect: 20 * time.Second, ping: 10 * time.Second, want: true},
+		{name: "ping equal to connect", connect: 10 * time.Second, ping: 10 * time.Second, want: false},
+		{name: "ping longer than connect", connect: 5 * time.Second, ping: 10 * time.Second, want: false},
+		// 0 表示"用默认 10s"：connect 配到 20s 时，默认值同样太短。
+		{name: "unset ping against long connect", connect: 20 * time.Second, ping: 0, want: true},
+		{name: "unset ping against short connect", connect: 5 * time.Second, ping: 0, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := Database{ConnectTimeout: tc.connect, PingTimeout: tc.ping}
+			err := db.validate().err()
+			got := err != nil && strings.Contains(err.Error(), "DB_PING_TIMEOUT must not be shorter")
+			if got != tc.want {
+				t.Fatalf("validate() = %v, want ping-shorter-than-connect error: %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDatabaseOptionsCarryPingTimeout(t *testing.T) {
+	db := Database{PingTimeout: 3 * time.Second}
+	if got := db.Options().PingTimeout; got != 3*time.Second {
+		t.Fatalf("Options().PingTimeout = %v, want 3s", got)
+	}
+	db = Database{}
+	if got := db.Options().PingTimeout; got != 0 {
+		t.Fatalf("Options().PingTimeout = %v, want the raw zero value (postgres pkg applies the default)", got)
+	}
+	if got := db.PingTimeoutOf(); got != postgres.DefaultPingTimeout {
+		t.Fatalf("PingTimeoutOf() = %v, want %v", got, postgres.DefaultPingTimeout)
 	}
 }
 

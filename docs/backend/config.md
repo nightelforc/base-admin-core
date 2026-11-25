@@ -305,6 +305,7 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | `http.request_timeout` | `HTTP_REQUEST_TIMEOUT` |
 | `database.password` | `DB_PASSWORD`（不是 `DATABASE_PASSWORD`），或 `DB_PASSWORD_FILE=<路径>` |
 | `database.connect_timeout` | `DB_CONNECT_TIMEOUT`（必须是整秒） |
+| `database.ping_timeout` | `DB_PING_TIMEOUT`（必须是整秒；0 表示默认 10s） |
 | `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
 | `jwt.secret` | `JWT_SECRET`，或 `JWT_SECRET_FILE=<路径>` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
@@ -395,6 +396,8 @@ func (c *Config) Validate() error {
 | 数据库建连超时必须为非负整秒 | `DB_CONNECT_TIMEOUT must be a whole number of seconds (pgx reads it as integer seconds)` |
 | `APP_NAME` 不能超过 56 字节（它会作为 PostgreSQL 会话标签，迁移再追加 `-migrate`） | `APP_NAME must be at most 56 bytes so the PostgreSQL session label fits in 63 ...` |
 | 数据库建连超时必须短于请求超时 | `DB_CONNECT_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
+| 启动 ping 超时不能为负 | `DB_PING_TIMEOUT must not be negative` |
+| 启动 ping 超时不得短于建连超时（0 按默认 10s 折算后比较） | `DB_PING_TIMEOUT must not be shorter than DB_CONNECT_TIMEOUT` |
 | Redis 建连超时必须短于请求超时 | `REDIS_DIAL_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
 | Redis 读 + 写超时之和必须短于请求超时（一次调用最坏情况） | `REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
 | Redis 建连超时不得大于读超时 | `REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT` |
@@ -439,7 +442,7 @@ invalid configuration:
 | 消费方 | 使用的配置 | 说明 |
 | --- | --- | --- |
 | `cmd/server` | `config.Load()`、`cfg.Summary()` | 加载配置并输出脱敏摘要 |
-| `pkg/postgres` | `cfg.Database.Options()` | 连接串（含 `statement_timeout`、会话标签 `app.name`、`connect_timeout`）、连接池、慢查询阈值 |
+| `pkg/postgres` | `cfg.Database.Options()` | 连接串（含 `statement_timeout`、会话标签 `app.name`、`connect_timeout`）、连接池、慢查询阈值、启动 ping 预算（`PingTimeout`） |
 | `pkg/redis` | `cfg.Redis.Options()` | 地址、账号、DB、超时、连接池、TLS 证书材料 |
 | `cmd/migrate` | `config.Load()`、`cfg.Database`、`cfg.Bootstrap` | Job 中执行迁移并创建首个管理员，使用与应用相同的配置 |
 | `build()` | `cfg.Security`、`cfg.JWT` | 密码策略、令牌签发 |
@@ -520,6 +523,7 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 - transaction 模式的 PgBouncer 与具名预处理语句、会话级 `statement_timeout` 都不兼容：前者会让 `Parse` 落在一条服务端连接、`Bind` 落到另一条，表现为 `prepared statement "..." does not exist`。应对办法是在连接串里加 `default_query_exec_mode=exec`（`simple_protocol` 也可以，但会失去参数类型信息）。当前 DSN 由 `Database.AppDSN()` 固定拼装，尚未暴露这个参数，接 PgBouncer 前需要先补一个配置项。
 - 迁移与 bootstrap 由 Job 执行：Job 期间 1 条连接，运行期为 0；连接账本里仍要给它留 1 条。
 - 连接串里带 `connect_timeout`，以及从 `app.name` 派生的会话标签（`Load` 时写入 `Database`，迁移 Job 追加 `-migrate`）；标签没有独立配置项，日志与 `pg_stat_activity` 里看到的是同一个名字，可以据此对账连接数、慢查询与锁等待。
+- 启动时的连通性验证有独立预算 `DB_PING_TIMEOUT`（0 按 10s 计，不得短于 `DB_CONNECT_TIMEOUT`）：它和 `connect_timeout` 是两段，`connect_timeout` 只覆盖每个新连接的 TCP 建连，建连本身可能比 ping 慢，所以两者不能倒挂。紧随其后的容量查询用自己的 2 秒预算，失败只记 debug——它是诊断，不该吃掉 ping 的剩余时间。
 - `pkg/postgres.Open` 启动时输出 `postgres pool` 日志，包含 `max_open`、`max_idle` 与服务器的 `max_connections`、`superuser_reserved_connections`；单池就超过服务器可用连接时输出 warning。
 - 运行期由 `internal/monitor/pg` 的连接池监控项采样（由 `internal/monitor.Run` 统一注册，默认节拍 30 秒），日志只在需要时输出：出现等待是 `postgres pool waiting`，使用率达到 80% 是 `postgres pool nearly exhausted`，连接被回收是 `postgres pool recycling connections`，健康时是 debug。每次采样（包括只建基线、不做判定的第一个）都会产出九个指标：`waits`、`waited`、`avg_wait`、`open`、`in_use`、`idle`、`max_open`、`idle_closed`、`lifetime_closed`，基线的增量自然为 0。`wait_count` 这类是累计值，日志里给的是本区间增量；多副本各记各的，PostgreSQL 侧没有对应视图。`pg.Checks(db, pg.Waiting)`（`db` 是 `*gorm.DB`）可以只保留关心的策略；「取快照 → 差分 → 走策略链」的通用实现是 `internal/monitor/core.Poll`。调度、判定顺序与扩展方式见 [monitor.md](monitor.md)。
 - 生产环境建议在 ConfigMap/Secret 中显式设置 `DB_MAX_OPEN_CONNS`（以及需要时的 `DB_MAX_IDLE_CONNS`），不要依赖模板默认值。

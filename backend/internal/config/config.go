@@ -436,6 +436,7 @@ func (c *Config) Summary() map[string]any {
 		"database.conn_max_idle_time": off(c.Database.ConnMaxIdleTime),
 		"database.statement_timeout":  off(c.Database.StatementTimeout),
 		"database.connect_timeout":    off(c.Database.ConnectTimeout),
+		"database.ping_timeout":       off(c.Database.PingTimeoutOf()),
 		"database.slow_query":         off(c.Database.SlowQueryThreshold),
 		"database.log_level":          c.Database.LogLevel,
 
