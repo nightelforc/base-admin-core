@@ -146,6 +146,36 @@ func TestNewClientCarriesPoolTimeout(t *testing.T) {
 	}
 }
 
+func TestNewClientCarriesMaxRetries(t *testing.T) {
+	// 这个字段是直接透传给驱动的：配置层的 0（不重试）会在 config.Redis.Options()
+	// 里先翻译成 -1，到了这一层只剩"透传"这一种行为，两层都要能对上。
+	for _, tc := range []struct {
+		name string
+		give int
+		want int
+	}{
+		{name: "disabled", give: -1, want: 0},
+		{name: "explicit", give: 2, want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := newClient(Options{
+				Mode:       ModeStandalone,
+				Addrs:      []string{"127.0.0.1:6379"},
+				MaxRetries: tc.give,
+			})
+			if err != nil {
+				t.Fatalf("newClient() 返回错误: %v", err)
+			}
+			defer client.Close()
+
+			// 驱动把 -1 归一化成 0，Options() 返回的是归一化之后的值。
+			if got := client.Options().MaxRetries; got != tc.want {
+				t.Fatalf("MaxRetries = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewClientTLSDisabledByDefault(t *testing.T) {
 	client, err := newClient(Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}})
 	if err != nil {

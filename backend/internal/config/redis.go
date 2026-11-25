@@ -39,6 +39,12 @@ type Redis struct {
 	// ReadTimeout+1s，实际值随读超时漂移，所以这里要求显式给出正值。
 	PoolTimeout time.Duration `env:"POOL_TIMEOUT" yaml:"pool_timeout"`
 
+	// MaxRetries 是失败后最多重试几次。0 表示不重试（本项目的语义）；go-redis 的
+	// 约定正好相反——0 是"用默认 3 次"、-1 才是关闭，翻译只在 Options() 里做一次。
+	// 每多一次重试，一条命令的最坏耗时就多算一遍 (pool_timeout + read_timeout)，
+	// 所以下面还有一条与请求预算挂钩的校验。
+	MaxRetries int `env:"MAX_RETRIES" validate:"min=0" yaml:"max_retries"`
+
 	// 哨兵模式的只读路由：开启后只读命令会被发往从节点。
 	RouteByLatency bool `env:"ROUTE_BY_LATENCY" yaml:"route_by_latency"`
 	RouteRandomly  bool `env:"ROUTE_RANDOMLY" yaml:"route_randomly"`
@@ -115,6 +121,13 @@ func (r Redis) validate() problems {
 // 只需同步这一个方法，不会出现"加了 env 却忘了传给客户端"的静默失效。Redis 的
 // Options 全是纯数据，所以这里是完整映射，不需要像 Database 那样留运行时字段。
 func (r Redis) Options() redis.Options {
+	// 配置层用 0 表达"不重试"，驱动用 -1 表达关闭；只在这一个地方翻译，其余
+	// 代码看到的是同一个数。
+	maxRetries := r.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = -1
+	}
+
 	return redis.Options{
 		Mode:             r.Mode,
 		Addrs:            r.Addrs,
@@ -129,6 +142,7 @@ func (r Redis) Options() redis.Options {
 		WriteTimeout:     r.WriteTimeout,
 		PoolSize:         r.PoolSize,
 		PoolTimeout:      r.PoolTimeout,
+		MaxRetries:       maxRetries,
 		RouteByLatency:   r.RouteByLatency,
 		RouteRandomly:    r.RouteRandomly,
 		TLS: redis.TLSOptions{

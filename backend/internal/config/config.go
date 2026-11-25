@@ -311,6 +311,13 @@ func (c *Config) validateTimeouts() problems {
 		if wait := c.Redis.ReadTimeout + c.Redis.WriteTimeout; wait >= c.HTTP.RequestTimeout {
 			p.add("REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT")
 		}
+		// 重试不是免费的：每次重试都会重新排队取连接再读一次，所以一条命令的
+		// 最坏耗时是 (max_retries+1) 倍的 pool+read。不把这条算进预算，调大重试
+		// 个数就会在线上表现为"偶发 504"，而配置看起来完全正常。
+		attempts := time.Duration(c.Redis.MaxRetries + 1)
+		if attempts*(c.Redis.PoolTimeout+c.Redis.ReadTimeout) >= c.HTTP.RequestTimeout {
+			p.add("(REDIS_MAX_RETRIES + 1) x (REDIS_POOL_TIMEOUT + REDIS_READ_TIMEOUT) must be shorter than HTTP_REQUEST_TIMEOUT")
+		}
 	}
 
 	// 建连不该比一次正常读写更慢：两者走同一条链路，建连超时更长只会让
@@ -450,6 +457,7 @@ func (c *Config) Summary() map[string]any {
 		"redis.write_timeout":    off(c.Redis.WriteTimeout),
 		"redis.pool_size":        c.Redis.PoolSize,
 		"redis.pool_timeout":     off(c.Redis.PoolTimeout),
+		"redis.max_retries":      c.Redis.MaxRetries,
 		"redis.route_by_latency": c.Redis.RouteByLatency,
 		"redis.route_randomly":   c.Redis.RouteRandomly,
 		"redis.tls_enabled":      c.Redis.TLSEnabled,

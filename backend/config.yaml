@@ -100,6 +100,10 @@ redis:
   # 取空闲连接的上限（池满时的排队），不是命令执行时间；必须为正。
   # 不配时 go-redis 会推导成 read_timeout+1s，实际值随读超时漂移。
   pool_timeout: 1s                    # L2
+  # 失败后最多重试几次，0 表示不重试（go-redis 的 -1 语义，由代码翻译）。
+  # 一条命令的最坏耗时 ≈ (max_retries+1)×(pool_timeout+read_timeout)，
+  # 必须短于 http.request_timeout。
+  max_retries: 1                      # L2
   route_by_latency: false             # L2 仅哨兵模式：只读命令按延迟路由到从节点
   route_randomly: false               # L2 仅哨兵模式：只读命令随机路由到从节点
   tls_enabled: false                  # L2 开启传输加密；其余 tls_* 仅在开启后生效

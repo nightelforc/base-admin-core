@@ -98,6 +98,18 @@ redis:
 `,
 			want: "REDIS_POOL_TIMEOUT must be positive",
 		},
+		{
+			// 默认 1 次重试 + 1s 排队 + 3s 读 = 8s，安全；把重试调到 10 就不再
+			// 落在 30s 的请求预算里，必须在启动时拦下。
+			name: "retries blow the request budget",
+			value: `
+redis:
+  max_retries: 10
+  pool_timeout: 1s
+  read_timeout: 3s
+`,
+			want: "(REDIS_MAX_RETRIES + 1) x (REDIS_POOL_TIMEOUT + REDIS_READ_TIMEOUT) must be shorter than HTTP_REQUEST_TIMEOUT",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeConfig(t, tc.value)

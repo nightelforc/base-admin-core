@@ -308,6 +308,7 @@ SECURITY_OPERATION_LOG_BODY_LIMIT
 | `database.ping_timeout` | `DB_PING_TIMEOUT`（必须是整秒；0 表示默认 10s） |
 | `redis.addrs` | `REDIS_ADDRS`（逗号分隔；单机恰好一个） |
 | `redis.pool_timeout` | `REDIS_POOL_TIMEOUT`（必须为正） |
+| `redis.max_retries` | `REDIS_MAX_RETRIES`（0 表示不重试） |
 | `jwt.secret` | `JWT_SECRET`，或 `JWT_SECRET_FILE=<路径>` |
 | `security.operation_log_body_limit` | `SECURITY_OPERATION_LOG_BODY_LIMIT` |
 
@@ -403,6 +404,7 @@ func (c *Config) Validate() error {
 | Redis 读 + 写超时之和必须短于请求超时（一次调用最坏情况） | `REDIS_READ_TIMEOUT + REDIS_WRITE_TIMEOUT must be shorter than HTTP_REQUEST_TIMEOUT` |
 | Redis 建连超时不得大于读超时 | `REDIS_DIAL_TIMEOUT must not exceed REDIS_READ_TIMEOUT` |
 | Redis 取连接超时必须为正（不允许依赖驱动的推导值） | `REDIS_POOL_TIMEOUT must be positive` |
+| Redis 重试预算必须落在请求超时内 | `(REDIS_MAX_RETRIES + 1) x (REDIS_POOL_TIMEOUT + REDIS_READ_TIMEOUT) must be shorter than HTTP_REQUEST_TIMEOUT` |
 | HTTP 请求体上限必须为正 | `HTTP_MAX_BODY_BYTES must be positive` |
 | HTTP/Redis 关键超时、登录窗口、封禁时长必须为正 | `HTTP_READ_TIMEOUT must be positive` |
 | `HTTP_IDLE_TIMEOUT` 不能为负（0 合法，回退到 `ReadTimeout`） | `HTTP_IDLE_TIMEOUT must not be negative` |
@@ -534,13 +536,17 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 
 `redis.dial_timeout` / `read_timeout` / `write_timeout` 都描述**一条连接内部**：分别管 TCP 建连、读响应、写请求。池满时请求还有一段"在池门外排队"，由 `redis.pool_timeout` 管（必须为正；不配时 go-redis 会推导成 `read_timeout + 1s`，值随读超时漂移，所以这里不给零值语义）。
 
-这段排队会被重试放大：go-redis 默认 `MaxRetries=3`（即最多 4 次尝试），且**池超时被明确列为可重试错误**。于是单条命令的最坏耗时是
+这段排队会被重试放大：每次重试都会重新取一次连接、再读一次响应，而**池超时被明确列为可重试错误**（`pool.ErrPoolTimeout`）。于是单条命令的最坏耗时是
 
 ```text
 (MaxRetries + 1) × (pool_timeout + read_timeout) + 退避
 ```
 
-按本模板默认值（1s + 3s、4 次尝试）约 16 秒；若沿用驱动的隐式 `pool_timeout`（4s），则是 28 秒——已经逼近 `http.request_timeout`，池满时会表现为一个看不出原因的 504。所以池满场景要观察的是 `pool_timeout`、`max_retries` 与请求预算三者之间的关系，而不只是池容量。
+`redis.max_retries` 默认 1（最多 2 次尝试），按默认值算约 8 秒；go-redis 自身的默认是 3 次（4 次尝试），同样的超时下会变成 16 秒，若再用它的隐式 `pool_timeout`（4s）则是 28 秒——已经逼近 `http.request_timeout`，池满时会表现为一个看不出原因的 504。
+
+配置层的 `0` 表示**不重试**：驱动用 `-1` 表达关闭、用 `0` 表达"使用默认 3 次"，这个反直觉的约定只在 `Redis.Options()` 里翻译一次。另外启动时会校验 `(max_retries+1) × (pool_timeout + read_timeout) < http.request_timeout`，所以把重试个数调大不会悄悄吃掉请求预算——它会直接拒绝启动。
+
+重试对**非幂等命令**不是免费的：命令在服务端已执行、响应在返回路上丢失（EOF 或读超时）时，重试会再执行一次。本服务里受影响的是登录限流的 `INCR`（计数可能偏大一次），其余用法（`SET`、`EXPIRE`、`SMEMBERS`、`DEL`）都是幂等的。所以池满场景要观察的不只是池容量，还有 `pool_timeout`、`max_retries` 与请求预算三者之间的关系。
 
 ## 7. 常见问题
 

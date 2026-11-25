@@ -38,7 +38,7 @@ func TestSummaryCoversEveryComponent(t *testing.T) {
 		"database.max_idle_conns", "database.statement_timeout",
 		"database.connect_timeout", "database.ping_timeout", "database.log_level",
 		"redis.mode", "redis.addrs", "redis.db", "redis.key_prefix",
-		"redis.pool_size", "redis.pool_timeout", "redis.tls_enabled",
+		"redis.pool_size", "redis.pool_timeout", "redis.max_retries", "redis.tls_enabled",
 		"jwt.issuer", "jwt.audience", "jwt.access_ttl", "jwt.refresh_ttl",
 		"security.bcrypt_cost", "security.password_min_length",
 		"security.login_max_attempts", "security.login_window",

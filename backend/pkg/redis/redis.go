@@ -110,6 +110,15 @@ type Options struct {
 	// 漂移，所以配置层要求显式给出正值。
 	PoolTimeout time.Duration
 
+	// MaxRetries 是失败后最多重试几次，语义与 go-redis 完全一致：0 表示用驱动
+	// 默认值（3 次），-1 表示关闭重试（驱动用 -1 表达关闭，0 反而是"用默认"，
+	// 这个反直觉的约定不在本包里改写，调用方负责翻译）。
+	//
+	// 它不改变单次尝试的耗时，但会把 pool_timeout 与 read_timeout 相乘：
+	// 最坏耗时是 (MaxRetries+1) × (PoolTimeout+ReadTimeout)，所以配置层用一条
+	// 预算校验把它和 HTTP_REQUEST_TIMEOUT 绑在一起。
+	MaxRetries int
+
 	// RouteByLatency 与 RouteRandomly 只对哨兵模式下的读流量有意义：
 	// 开启后 go-redis 会把只读命令发往从节点。
 	RouteByLatency bool
@@ -217,6 +226,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			WriteTimeout: opts.WriteTimeout,
 			PoolSize:     opts.PoolSize,
 			PoolTimeout:  opts.PoolTimeout,
+			MaxRetries:   opts.MaxRetries,
 			TLSConfig:    tlsCfg,
 		}), nil
 
@@ -240,6 +250,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			WriteTimeout:     opts.WriteTimeout,
 			PoolSize:         opts.PoolSize,
 			PoolTimeout:      opts.PoolTimeout,
+			MaxRetries:       opts.MaxRetries,
 			RouteByLatency:   opts.RouteByLatency,
 			RouteRandomly:    opts.RouteRandomly,
 			// go-redis 的 FailoverOptions 只有一个 TLSConfig，哨兵连接与数据连接
