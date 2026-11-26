@@ -70,6 +70,11 @@ type Redis struct {
 	TLSKeyFile            string `env:"TLS_KEY_FILE" yaml:"tls_key_file"`
 	TLSServerName         string `env:"TLS_SERVER_NAME" yaml:"tls_server_name"`
 	TLSInsecureSkipVerify bool   `env:"TLS_INSECURE_SKIP_VERIFY" yaml:"tls_insecure_skip_verify"`
+
+	// clientName 不是配置项：它由 Load 从 app.name 派生后写入，没有 yaml/env tag，
+	// 外部无法单独设置。与 PostgreSQL 的 application_name 同源同名，CLIENT LIST
+	// 的 name 列与 pg_stat_activity 的标签因此可以互相对照，排查时不需要先做映射。
+	clientName string
 }
 
 // validate 校验 Key 命名空间、地址列表与部署模式是否匹配，以及连接超时。
@@ -160,6 +165,7 @@ func (r Redis) Options() redis.Options {
 		ReadTimeout:      r.ReadTimeout,
 		WriteTimeout:     r.WriteTimeout,
 		PoolSize:         r.PoolSize,
+		ClientName:       r.clientName,
 		PoolTimeout:      r.PoolTimeout,
 		MaxRetries:       maxRetries,
 		ConnMaxIdleTime:  r.ConnMaxIdleTime,

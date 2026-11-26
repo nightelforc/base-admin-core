@@ -93,13 +93,6 @@ func run() error {
 		}
 	}()
 
-	// 4.1 监控：开关在配置里；开哪些检查、怎么取依赖都由 monitor 自己完成。
-	if cfg.Monitor.Enabled {
-		monitor.Run(ctx, log, monitor.Deps{DB: db})
-	} else {
-		log.Info("monitor disabled by config")
-	}
-
 	// 5. Redis：会话与登录限流都从这里取，所以只建一个客户端、一个连接池。
 	rdb, err := redis.Open(ctx, cfg.Redis.Options())
 	if err != nil {
@@ -110,6 +103,14 @@ func run() error {
 			log.Error("close redis", "error", closeErr)
 		}
 	}()
+
+	// 5.1 监控：开关在配置里；开哪些检查、怎么取依赖都由 monitor 自己完成。
+	// 放在所有被监控的组件之后，来源表只需要拿已经就绪的句柄。
+	if cfg.Monitor.Enabled {
+		monitor.Run(ctx, log, monitor.Deps{DB: db, Redis: rdb})
+	} else {
+		log.Info("monitor disabled by config")
+	}
 
 	// 6. 装配：仓储、服务、handler 的构造顺序与依赖关系都在 build 里。
 	app, operations, err := build(cfg, log, db, rdb)

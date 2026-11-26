@@ -104,6 +104,10 @@ type Options struct {
 	WriteTimeout time.Duration
 	// PoolSize 限制连接池的最大连接数。为零时 go-redis 依据 GOMAXPROCS 自动决定。
 	PoolSize int
+	// ClientName 会写进每条连接的 CLIENT LIST 记录（name 列）。RESP3 下由
+	// HELLO 携带、回退路径在初始化 pipeline 里发 CLIENT SETNAME，两种方式都不
+	// 额外增加往返。它回答"这些连接属于哪个服务"，不区分副本。
+	ClientName string
 	// PoolTimeout 限制"从池里取一条连接"最多等多久。它既不是建连时间
 	// （DialTimeout），也不是命令执行时间（Read/WriteTimeout），而是池满时请求
 	// 排队的地方。零值交给 go-redis 推导（ReadTimeout + 1s），实际值会随读超时
@@ -239,6 +243,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			ReadTimeout:  opts.ReadTimeout,
 			WriteTimeout: opts.WriteTimeout,
 			PoolSize:     opts.PoolSize,
+			ClientName:   opts.ClientName,
 			PoolTimeout:  opts.PoolTimeout,
 			MaxRetries:   opts.MaxRetries,
 
@@ -266,6 +271,7 @@ func newClient(opts Options) (*goredis.Client, error) {
 			ReadTimeout:      opts.ReadTimeout,
 			WriteTimeout:     opts.WriteTimeout,
 			PoolSize:         opts.PoolSize,
+			ClientName:       opts.ClientName,
 			PoolTimeout:      opts.PoolTimeout,
 			MaxRetries:       opts.MaxRetries,
 			ConnMaxIdleTime:  opts.ConnMaxIdleTime,

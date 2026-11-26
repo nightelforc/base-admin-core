@@ -3,7 +3,7 @@
 // 调用方只递运行时依赖，由本包决定开哪些检查：
 //
 //	if cfg.Monitor.Enabled {
-//		monitor.Run(ctx, log, monitor.Deps{DB: db})
+//		monitor.Run(ctx, log, monitor.Deps{DB: db, Redis: rdb})
 //	}
 //
 // 「监控什么、多久一次、什么算异常」是 monitor 自己的策略，不散落到 cmd 的装配里，
@@ -17,10 +17,12 @@ import (
 	"context"
 	"log/slog"
 
+	goredis "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"github.com/nightelforc/base-admin-core/backend/internal/monitor/core"
 	"github.com/nightelforc/base-admin-core/backend/internal/monitor/pg"
+	"github.com/nightelforc/base-admin-core/backend/internal/monitor/redis"
 )
 
 // Deps 是调用方能提供的运行时依赖。
@@ -28,7 +30,8 @@ import (
 // 收 *gorm.DB 而不是 *sql.DB：调用方只递它手上有的东西。字段为 nil 时对应来源
 // 不注册，这不算失败——没配就是没配。
 type Deps struct {
-	DB *gorm.DB
+	DB    *gorm.DB
+	Redis *goredis.Client
 }
 
 // source 是一个监控来源：一路依赖，以及把它变成监控项的方式。
@@ -47,6 +50,7 @@ type sourceFailure struct {
 
 var sources = []source{
 	{name: "postgres", build: func(d Deps) ([]core.Check, error) { return pg.Checks(d.DB) }},
+	{name: "redis", build: func(d Deps) ([]core.Check, error) { return redis.Checks(d.Redis), nil }},
 }
 
 // Run 启动监控后立即返回。

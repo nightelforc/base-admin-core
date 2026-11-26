@@ -25,6 +25,19 @@ func TestRedisOptionsCarryConnectionTimes(t *testing.T) {
 
 // TestRedisMaxRetriesDefault 固定模板里的默认值：重试一次是权衡后的选择，
 // 改动它应当是一次有意为之的提交，而不是顺手跟驱动的默认值对齐。
+// TestLoadDerivesClientNameFromAppName 钉住"CLIENT LIST 的 name 与日志里的 app
+// 同名"这件事：它不是一个可配置项，唯一的来源就是 app.name（首尾空白去掉）。
+func TestLoadDerivesClientNameFromAppName(t *testing.T) {
+	cfg := loadForSummary(t, `
+app:
+  name: "  base-admin  "
+`)
+
+	if got := cfg.Redis.Options().ClientName; got != "base-admin" {
+		t.Fatalf("Options().ClientName = %q, want base-admin", got)
+	}
+}
+
 func TestRedisMaxRetriesDefault(t *testing.T) {
 	cfg := loadForSummary(t, "")
 	if got := cfg.Redis.MaxRetries; got != 1 {

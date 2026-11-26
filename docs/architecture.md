@@ -33,7 +33,7 @@ handler ──► service ──► repository ──► GORM ──► PostgreS
 
 pkg 子包按「用哪个依赖就报哪个依赖的名字」命名：`pkg/redis` 而不是 `pkg/cache`，`pkg/postgres` 而不是 `pkg/database`，`pkg/jwt` / `pkg/password` 而不是笼统的 `pkg/security`，所以读 import 就能看出连的是谁。
 登录限流 `internal/throttle` 刻意留在 `internal/`：它编码的是本项目的账号锁定策略，不是可复用基础设施。
-观测同理：`internal/monitor/core` 只有四个概念——`Check`（监控项：自己定间隔、自己采样、自己判定）、`Registry`（节拍、panic 隔离、状态缓存与日志输出）、`Poll[T]`（把「取快照 → 差分 → 按策略链判定」这一类同形状的监控项一次写完，连接池就是它的第一个用户）、`Snapshot`/`CheckState`（每个监控项最近一次采样：严重度、指标、采样时间、是否陈旧，供读取方消费）；具体监控项放在子包（如 `monitor/pg` 的连接池），由 `monitor.Run` 统一注册——`cmd/server` 只递运行时依赖，开哪些检查是 monitor 自己的策略，不散落成装配代码或全局配置；因此它不进 `pkg`，也没有任何驱动反向依赖它。将来真要跨 module 复用，再整体迁移到 `pkg`。细节（调度语义、判定策略、日志契约、扩展方式、已知缺口）见 [backend/monitor.md](backend/monitor.md)。
+观测同理：`internal/monitor/core` 只有四个概念——`Check`（监控项：自己定间隔、自己采样、自己判定）、`Registry`（节拍、panic 隔离、状态缓存与日志输出）、`Poll[T]`（把「取快照 → 差分 → 按策略链判定」这一类同形状的监控项一次写完，连接池就是它的第一个用户）、`Snapshot`/`CheckState`（每个监控项最近一次采样：严重度、指标、采样时间、是否陈旧，供读取方消费）；具体监控项放在子包（如 `monitor/pg`、`monitor/redis` 的连接池），由 `monitor.Run` 统一注册——`cmd/server` 只递运行时依赖，开哪些检查是 monitor 自己的策略，不散落成装配代码或全局配置；因此它不进 `pkg`，也没有任何驱动反向依赖它。将来真要跨 module 复用，再整体迁移到 `pkg`。细节（调度语义、判定策略、日志契约、扩展方式、已知缺口）见 [backend/monitor.md](backend/monitor.md)。
 
 ## 2. 配置
 

@@ -95,6 +95,8 @@ func Load() (*Config, error) {
 	// 会话标签在这里一次性派生：Database 不暴露设置入口，日志与 PostgreSQL 用的
 	// 必然是同一个 app.name。放在校验之前，校验失败时也不影响错误信息。
 	cfg.Database.sessionLabel = strings.TrimSpace(cfg.App.Name)
+	// Redis 的 CLIENT LIST name 取自同一个名字：库侧排查时两边看到的是同一个标识。
+	cfg.Redis.clientName = strings.TrimSpace(cfg.App.Name)
 
 	cfg.source = path
 	if err := cfg.Validate(); err != nil {

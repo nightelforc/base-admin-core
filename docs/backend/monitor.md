@@ -139,7 +139,11 @@ if cfg.Monitor.Enabled {
 - **每次采样都留状态**：`Msg` 为空的健康采样不写日志，但照样进 `Registry` 的状态缓存——日志是事件，状态才是「现在怎么样」。
 - `ctx` 取消后所有采样协程退出，`Run` 返回。
 
-## 5. 判定策略（PostgreSQL 连接池）
+## 5. 判定策略（连接池）
+
+两个来源共用同一套形状：`Checks(依赖) → core.Poll[T] → 策略链 → Result`。区别只在「怎么取快照」和「哪些信号值得报」。
+
+### 5.1 PostgreSQL 连接池
 
 `pg.Checks(db *gorm.DB, ss ...Strategy)` 收 `*gorm.DB` 而不是 `*sql.DB`：`gorm → database/sql` 的转换是 pg 自己的知识，不该出现在 `monitor` 的开关表里（Redis、ES 都没有这一步）。`db` 为 `nil` 时返回空，`db.DB()` 失败时把错误交给 `monitor` 记一条 warning。
 
@@ -161,6 +165,26 @@ if cfg.Monitor.Enabled {
 - `wait_count`、`wait_duration` 这类是**累计值**，日志里给的是区间增量；多副本各记各的，PostgreSQL 侧没有对应视图（`pg_stat_activity` 看不到客户端排队）。
 - 慢查询日志的 `elapsed` **包含池等待**（GORM 在整条回调链之后才 `Trace`，而取连接发生在链内），所以「等连接」与「执行慢」只能靠这里区分——这是连接池监控的核心价值。
 
+### 5.2 Redis 连接池
+
+`redis.Checks(client *goredis.Client, ss ...Strategy)` 收 `*goredis.Client`：v9 的 `NewFailoverClient` 也返回 `*Client`，单机与哨兵不需要分叉。采样只读客户端内存里的计数（`PoolStats()` 是一次原子读），**不向服务端发命令**。
+
+| 顺序 | 策略 | 认领条件 | 严重度 | 消息 |
+| --- | --- | --- | --- | --- |
+| 1 | `Timeouts` | 本区间内 `Timeouts` 有增量 | `Warn` | `redis pool timeout` |
+| 2 | `Starvation` | 采样这一刻 `PendingRequests > 0` | `Warn` | `redis pool starving` |
+| 3 | `Unusable` | 本区间内 `Unusable` 有增量 | `Notice` | `redis pool discarded unusable connections` |
+| 4 | `Healthy` | 总是认领（兜底） | `OK` | `redis pool healthy` |
+
+每次采样固定产出七个指标：`timeouts`、`waits`、`waited`（秒）、`unusable` 是区间增量；`total`、`idle`、`pending` 是当前值。`hits`/`misses` 不产出——它们只描述快路径占比，没有可执行结论。
+
+几处细节：
+
+- `Starvation` 看的是**瞬时值**：30 秒采样会漏掉短促排队，它回答「现在还卡着吗」；「卡过没有」看 `Timeouts` 的增量。两者互补。
+- `Timeouts` 直接对应 `redis.pool_timeout` 那个预算：出现增量说明排队已经越过了我们配的值。
+- `Unusable` 是**连接被对端丢掉**的证据（取出的连接已经不可用），严重度给 `Notice` 而不是 `Warn`：一条空闲连接坏掉是可自行恢复的现象，除非持续发生，否则不该报成故障。
+- 与 PostgreSQL 同源：`app.name` 同时写进 `CLIENT LIST` 的 `name` 列和 `pg_stat_activity.application_name`，库侧两边看到的是同一个标识。
+
 ## 6. 日志契约
 
 | 事件 | 级别 | 关键字段 |
@@ -176,6 +200,10 @@ if cfg.Monitor.Enabled {
 | `postgres pool waiting` | warn | `waits`、`waited`、`avg_wait` + 池字段 |
 | `postgres pool nearly exhausted` | warn | 池字段 |
 | `postgres pool recycling connections` | info | `idle_closed`、`lifetime_closed` + 池字段 |
+| `redis pool healthy` | debug | `total`、`idle`、`pending`、`timeouts`、`waits`、`waited`、`unusable` |
+| `redis pool timeout` | warn | 同上 |
+| `redis pool starving` | warn | 同上 |
+| `redis pool discarded unusable connections` | info | 同上 |
 
 每条采样日志都带 `monitor=<name>`（如 `monitor=postgres.pool`），来自 `Registry` 的 scoped logger。默认日志级别是 `info`，健康采样走 `debug` 因此不可见：正常运行**不产生任何监控日志**——这是有意的，健康不需要占一行。
 
@@ -191,13 +219,16 @@ if cfg.Monitor.Enabled {
 
 ## 8. 扩展
 
-### 8.1 加一个监控来源（以 Redis 为例）
+### 8.1 加一个监控来源（照 `internal/monitor/redis` 抄）
 
-1. 新建 `internal/monitor/redis/redis.go`，用 `core.NewPoll[redis.PoolStats]` 组装监控项，策略与 `pg` 同形（`Waiting` / `Exhaustion` / `Healthy`）；
-2. 在 `monitor.go` 的 `sources` 表加一行：`{name: "redis", build: func(d Deps) ([]core.Check, error) { return redisx.Checks(d.Redis) }}`；
-3. `Deps` 增加字段 `Redis *redis.Client`；
-4. `cmd/server` 的 `monitor.Deps{DB: db, Redis: rdb}` 多传一个依赖，**其余不动**；
-5. 补测试：策略纯函数单测 + `checks` 的「一路失败不影响另一路」。
+现成的两个来源（`pg`、`redis`）就是模板，步骤固定四步：
+
+1. 新建 `internal/monitor/<组件>/`，用 `core.NewPoll[T]` 组装监控项：`take` 取快照、`measure` 把快照变成指标、策略从重到轻；
+2. 在 `monitor.go` 的 `sources` 表加一行 `{name: "<组件>", build: func(d Deps) ([]core.Check, error) { return <pkg>.Checks(d.X), nil }}`（依赖为 `nil` 时 `Checks` 返回空，不要返回错误）；
+3. `Deps` 增加字段，`cmd/server` 的 `monitor.Deps{...}` 多传一个依赖，**其余不动**；
+4. 补测试：策略纯函数单测 + 指标形状 + 「一路失败不影响另一路」。
+
+依赖转换（如 `*gorm.DB → *sql.DB`）留在来源包里，`sources` 表只管挑依赖。
 
 `cmd` 始终只知道 `monitor.Run`，检查名、阈值、节拍都留在 `monitor` 内。
 
@@ -213,7 +244,7 @@ if cfg.Monitor.Enabled {
   - 注意读操作**不能直接调 `Sample`**：`Poll` 的判定基于相邻快照的增量，额外采样会消耗掉本区间的增量，页面刷新会改变日志行为。
   - 出口形态待定：`/debug/monitor`（仅内网/管理员）还是管理后台页面（要走权限体系 `system:monitor:list`）。
 - **指标导出**：把同样的 `Result` 投影成 Prometheus 指标（`counter`/`gauge`），与日志共用采样，不重复采集。
-- **单次采样超时**：`Sample` 卡住时 ticker 会丢样本且无告警。走网络的采样（Redis `INFO`、ES）需要超时；内存采样不需要，目前刻意不做。
+- **单次采样超时**：`Sample` 卡住时 ticker 会丢样本且无告警。目前两个来源都只读内存（`sql.DB.Stats()`、`PoolStats()`），不需要超时；将来接走网络的来源（ES、Redis `INFO`）时要补。
 - **按来源配置节拍**：现在是全局 `DefaultInterval`。等到有慢源（网络往返）再考虑，避免过早引入配置面。
 - **前端页面**：图表、时间范围、多副本聚合——需要先有指标存储，属于独立模块。
 
@@ -226,9 +257,10 @@ if cfg.Monitor.Enabled {
 | `internal/monitor/core/registry.go` | `Registry`：注册、调度、状态缓存、panic 隔离、输出 |
 | `internal/monitor/core/poll.go` | `Poll[T]`、`Strategy[T]`、`Delta`、`DurationDelta` |
 | `internal/monitor/core/state.go` | `CheckState`、`Instance`、`Snapshot`：最近一次采样与陈旧判定 |
-| `internal/monitor/pg/pg.go` | 连接池监控项与四条默认策略 |
+| `internal/monitor/pg/pg.go` | PostgreSQL 连接池监控项与四条默认策略 |
+| `internal/monitor/redis/redis.go` | Redis 连接池监控项与四条默认策略 |
 | `internal/config/monitor.go` | `monitor.enabled` 开关 |
 
-测试共 39 个：`core` 22 个（注册表 9 + `Poll` 5 + 状态 8）、`pg` 12 个（策略纯函数、边界、默认顺序、指标形状、真实 `Poll` 的增量判定、句柄不可用）、`monitor` 5 个（装配、空依赖、一路失败不影响其他路、无事可做时不起协程）。
+测试共 49 个：`core` 22 个（注册表 9 + `Poll` 5 + 状态 8）、`pg` 12 个（策略纯函数、边界、默认顺序、指标形状、真实 `Poll` 的增量判定、句柄不可用）、`redis` 9 个（策略、指标形状、基线为 0、真实客户端的首个采样）、`monitor` 6 个（装配、空依赖、两个来源、一路失败不影响其他路、无事可做时不起协程）。
 
 运行方式：`go test ./internal/monitor/...`。

@@ -561,7 +561,7 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 这也决定了这两个参数各自解决什么问题：
 
 - 对端已经发了 FIN 的死连接，探测能直接发现，会被静默换掉，请求无感——不需要靠这两个参数兜底。
-- 中间设备（NAT、负载均衡）**静默丢弃**、没发 FIN 的半开连接，探测发现不了：第一条命令会写成功、读等到 `read_timeout` 才失败，再触发重试。这才是 `conn_max_idle_time` 要压的东西。
+- 中间设备（NAT、负载均衡）**静默丢弃**、没发 FIN 的半开连接，探测发现不了：第一条命令会写成功、读等到 `read_timeout` 才失败，再触发重试。这才是 `conn_max_idle_time` 要压的东西。这类现象在运行期由 `internal/monitor/redis` 的 `unusable` 指标暴露出来。
 
 要压的话，阈值必须小于链路上的空闲断开时间：
 
@@ -577,6 +577,8 @@ PostgreSQL 默认 `max_connections=100`、`superuser_reserved_connections=3`，�
 代价是回收之后的第一次使用要重新拨号（开启 TLS 还要握手），所以不宜调得过小。
 
 `conn_max_lifetime` 只在 DNS/VIP 漂移、或想周期性甩掉长连接时才有意义，默认保持 0。设成非零值后，同一批连接会在同一时刻到期，驱动提供了 `ConnMaxLifetimeJitter` 来错开，本模板暂未暴露——需要时再加。`conn_max_idle_time` 不接受 0：0 在驱动里等于"使用默认 30 分钟"，与本模板"不给零值语义"的约定冲突，会显得像关闭了回收而实际没有。
+
+同一份 `app.name` 也写进每条 Redis 连接的 `CLIENT LIST` `name` 列（RESP3 下由 `HELLO` 携带，回退路径在初始化 pipeline 里发 `CLIENT SETNAME`，都不增加往返），因此 `CLIENT LIST` 与 `pg_stat_activity` 两边看到的是同一个标识。它是服务级的：多副本同名，只能回答"这些连接属于哪个服务"，不能回答"属于哪个副本"。
 
 ## 7. 常见问题
 

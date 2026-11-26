@@ -176,6 +176,37 @@ func TestNewClientCarriesMaxRetries(t *testing.T) {
 	}
 }
 
+func TestNewClientCarriesClientName(t *testing.T) {
+	// 两种模式都要传：漏一处，那条路径在 CLIENT LIST 里就是 name= 空白。
+	const name = "base-admin"
+
+	for _, tc := range []struct {
+		name string
+		opts Options
+	}{
+		{
+			name: "standalone",
+			opts: Options{Mode: ModeStandalone, Addrs: []string{"127.0.0.1:6379"}, ClientName: name},
+		},
+		{
+			name: "sentinel",
+			opts: Options{Mode: ModeSentinel, MasterName: "mymaster", Addrs: []string{"127.0.0.1:26379"}, ClientName: name},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := newClient(tc.opts)
+			if err != nil {
+				t.Fatalf("newClient() 返回错误: %v", err)
+			}
+			defer client.Close()
+
+			if got := client.Options().ClientName; got != name {
+				t.Fatalf("ClientName = %q, want %q", got, name)
+			}
+		})
+	}
+}
+
 func TestNewClientCarriesConnMaxTimes(t *testing.T) {
 	// 两个字段都是纯透传，但要两种模式各验一遍：漏传一处，那条路径就会回落到
 	// 驱动默认（空闲 30 分钟、寿命不限），而配置里写的是别的数。

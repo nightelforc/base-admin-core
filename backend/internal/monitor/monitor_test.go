@@ -9,6 +9,8 @@ import (
 
 	"gorm.io/gorm"
 
+	goredis "github.com/redis/go-redis/v9"
+
 	"github.com/nightelforc/base-admin-core/backend/internal/monitor/core"
 )
 
@@ -34,6 +36,25 @@ func TestChecksIncludesPoolWhenDatabasePresent(t *testing.T) {
 	}
 	if name := items[0].Name(); name != "postgres.pool" {
 		t.Fatalf("check name = %q, want postgres.pool", name)
+	}
+}
+
+func TestChecksIncludesEveryConfiguredSource(t *testing.T) {
+	db := &gorm.DB{Config: &gorm.Config{ConnPool: &sql.DB{}}}
+	client := goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:6379"})
+	defer client.Close()
+
+	items, failures := checks(sources, Deps{DB: db, Redis: client})
+	if len(failures) != 0 {
+		t.Fatalf("unexpected failures: %v", failures)
+	}
+
+	names := make([]string, 0, len(items))
+	for _, c := range items {
+		names = append(names, c.Name())
+	}
+	if len(names) != 2 || names[0] != "postgres.pool" || names[1] != "redis.pool" {
+		t.Fatalf("check names = %v, want [postgres.pool redis.pool]", names)
 	}
 }
 
